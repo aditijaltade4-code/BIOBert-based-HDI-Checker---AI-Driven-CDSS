@@ -1,0 +1,177 @@
+:root {
+    --primary: #2c3e50;
+    --accent: #3498db;
+    --high-risk: #e74c3c;
+    --mod-risk: #f39c12;
+    --low-risk: #27ae60;
+    --bg: #f4f7f6;
+    --card-shadow: 0 4px 15px rgba(0,0,0,0.08);
+}
+
+/* GENERAL SETUP */
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: #333;
+    line-height: 1.6;
+    padding: 20px;
+    margin: 0;
+}
+
+.container {
+    max-width: 1100px;
+    margin: auto;
+    background: white;
+    padding: 40px;
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.05);
+}
+
+header {
+    text-align: center;
+    margin-bottom: 40px;
+    padding-bottom: 20px;
+    border-bottom: 2px solid #f0f0f0;
+}
+
+header h1 {
+    color: var(--primary);
+    margin-bottom: 5px;
+}
+
+header p {
+    color: #7f8c8d;
+    font-size: 1.1em;
+}
+
+/* SECTION CARDS */
+.card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 25px;
+    margin-top: 25px;
+    box-shadow: var(--card-shadow);
+    transition: transform 0.2s ease;
+    border: 1px solid #edf2f7;
+}
+
+.card h2 {
+    margin-top: 0;
+    font-size: 1.3em;
+    color: var(--primary);
+    border-left: 5px solid var(--accent);
+    padding-left: 15px;
+}
+
+/* FORM ELEMENTS */
+.manual-form {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    margin-bottom: 20px; /* Added spacing below form */
+}
+
+textarea, input {
+    width: 100%;
+    padding: 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 10px;
+    font-size: 16px;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+textarea:focus, input:focus {
+    border-color: var(--accent);
+    outline: none;
+}
+
+/* BUTTON STYLES */
+button {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 14px 24px;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-block;
+    white-space: nowrap; /* Prevents button text from wrapping */
+}
+
+button:hover {
+    background: #34495e;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+
+.btn-ai {
+    background: #6c5ce7; 
+    margin-top: 10px;
+}
+
+.btn-ai:hover { background: #5849c4; }
+
+/* FIX: DYNAMIC RESULTS AREA STYLING */
+.results-area {
+    margin-top: 20px;
+    min-height: 20px;
+}
+
+.interaction-result-card {
+    transition: all 0.3s ease;
+    animation: fadeIn 0.4s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* DASHBOARD & CHARTS */
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 25px;
+    margin-top: 20px;
+}
+
+.chart-wrapper {
+    position: relative;
+    height: 250px;
+    width: 100%;
+    margin-top: 15px;
+}
+
+/* AI STATUS ANIMATION */
+.status-msg {
+    margin-top: 15px;
+    font-weight: 500;
+    color: var(--accent);
+}
+
+.loading {
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+/* MOBILE RESPONSIVENESS */
+@media (max-width: 768px) {
+    .manual-form {
+        flex-direction: column;
+    }
+    
+    .container {
+        padding: 20px;
+    }
+    
+    button {
+        width: 100%;
+    }
+}
