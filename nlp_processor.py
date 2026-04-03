@@ -14,15 +14,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 1. SYNONYM MAPPING ---
-# This ensures Turmeric/Curcumin or Omez/Pantoprazole all point to the right data
-SYNONYMS = {
+# --- 1. THE CLINICAL DICTIONARY ---
+# This helps the AI when it's "unsure" about a word.
+# It handles synonyms like Turmeric -> Curcumin automatically.
+MEDICAL_MAP = {
     "turmeric": "Curcumin",
     "curcumin": "Curcumin",
-    "omez": "Pantoprazole",
-    "omeprazole": "Pantoprazole",
+    "gallic": "Gallic Acid",
     "aspirin": "Aspirin",
-    "eco-sprin": "Aspirin"
+    "warfarin": "Warfarin",
+    "omez": "Pantoprazole",
+    "pantoprazole": "Pantoprazole",
+    "ashwagandha": "Ashwagandha",
+    "triphala": "Triphala",
+    "metformin": "Metformin"
 }
 
 API_URL = "https://api-inference.huggingface.co/models/d4data/biomedical-ner-all"
@@ -44,53 +49,55 @@ def query_biobert_api(text):
 @app.post("/analyze")
 async def analyze_text(request: AnalyzeRequest):
     try:
-        text = request.text
+        text = request.text.lower()
         if not text: return {"results": [], "status": "error"}
 
         # 1. AI NER Detection
         api_results = query_biobert_api(text)
         
-        if isinstance(api_results, dict) and "estimated_time" in api_results:
-            return {"status": "loading", "message": "BioBERT is warming up..."}
-
-        # 2. WORD RECONSTRUCTION
-        detected_words = []
-        current_word = ""
-
+        found_entities = []
+        
+        # 2. Extract from AI if successful
         if isinstance(api_results, list):
+            current_word = ""
             for ent in api_results:
                 word = ent.get('word', '')
                 if word.startswith("##"):
                     current_word += word.replace("##", "")
                 else:
-                    if current_word: detected_words.append(current_word.lower())
+                    if current_word: found_entities.append(current_word.lower())
                     current_word = word
-            if current_word: detected_words.append(current_word.lower())
+            if current_word: found_entities.append(current_word.lower())
 
-        # 3. SYNONYM NORMALIZATION
-        # If AI finds 'turmeric', we change it to 'Curcumin' so the CSV match works
-        final_entities = []
-        for word in detected_words:
-            normalized = SYNONYMS.get(word, word.title())
-            if normalized not in final_entities and len(normalized) > 2:
-                final_entities.append(normalized)
+        # 3. THE SAFETY NET: Keyword Scanning
+        # Even if the AI returns [], we check the text for our MEDICAL_MAP keys
+        for key in MEDICAL_MAP.keys():
+            if key in text and key not in found_entities:
+                found_entities.append(key)
 
-        print(f"🧠 AI Detected & Normalized: {final_entities}")
+        # 4. NORMALIZATION (Synonyms & Case)
+        # Convert 'turmeric' to 'Curcumin', 'omez' to 'Pantoprazole', etc.
+        normalized_entities = []
+        for e in found_entities:
+            norm = MEDICAL_MAP.get(e, e.title())
+            if norm not in normalized_entities:
+                normalized_entities.append(norm)
 
-        # 4. Interaction Logic
-        if len(final_entities) < 2:
-            return {"results": [], "detected_entities": final_entities, "message": "Need 2 entities."}
+        print(f"🧠 AI & Scanner Detected: {normalized_entities}")
 
-        herb, drug = final_entities[0], final_entities[1]
+        if len(normalized_entities) < 2:
+            return {"results": [], "detected_entities": normalized_entities, "message": "Need 2 entities."}
 
-        # 5. Return Result
+        herb, drug = normalized_entities[0], normalized_entities[1]
+
+        # 5. Create Final Result
         new_row = {
             "herb": herb,
             "drug": drug,
-            "interaction_text": f"AI identified interaction: {herb} + {drug}",
-            "mechanism": "BioBERT Neural Entity Recognition with Synonym Mapping.",
+            "interaction_text": f"Potential interaction identified between {herb} and {drug}.",
+            "mechanism": "Neural Entity Recognition and Medical Keyword Mapping.",
             "severity": "Moderate",
-            "recommendation": "Review clinical guidelines for these agents.",
+            "recommendation": "Consult clinical guidelines. Monitor for adverse effects.",
             "citation_url": "https://pubmed.ncbi.nlm.nih.gov/"
         }
 
