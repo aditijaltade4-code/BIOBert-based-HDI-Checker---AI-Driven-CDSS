@@ -9,8 +9,10 @@ app.use(express.static(path.join(__dirname)));
 
 // --- 1. CONFIGURATION ---
 // On Render, the Python service has its own URL. 
-// Add an Environment Variable in Render called AI_URL and paste your Python service link.
-const AI_BACKEND_URL = process.env.AI_URL || 'http://127.0.0.1:8000';
+// --- 1. CONFIGURATION ---
+// On Render, both services share the environment. 
+// We force it to 0.0.0.0:8000 which is the internal 'open' address for the Python engine.
+const AI_BACKEND_URL = process.env.AI_URL || 'http://0.0.0.0:8000';
 const CSV_PATH = path.join(__dirname, 'data', 'interactions.csv'); 
 let interactionsDB = [];
 
