@@ -127,6 +127,8 @@ async def analyze_text(request: AnalyzeRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    # Important: 0.0.0.0 is required for Render to route external traffic
-    port = int(os.environ.get("PORT", 8000))
+    import os
+    # Use port 8000 for internal bridge
+    port = 8000 
+    # 0.0.0.0 is MANDATORY for Render internal communication
     uvicorn.run(app, host="0.0.0.0", port=port)
