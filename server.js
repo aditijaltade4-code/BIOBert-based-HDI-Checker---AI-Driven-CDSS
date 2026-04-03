@@ -7,11 +7,15 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
+// --- 1. CONFIGURATION ---
+// On Render, the Python service has its own URL. 
+// Add an Environment Variable in Render called AI_URL and paste your Python service link.
+const AI_BACKEND_URL = process.env.AI_URL || 'http://127.0.0.1:8000';
 const CSV_PATH = path.join(__dirname, 'data', 'interactions.csv'); 
 let interactionsDB = [];
 
 /* -----------------------
-   1. Load CSV into memory
+   2. Load CSV into memory
    ----------------------- */
 async function loadCSV() {
     return new Promise((resolve, reject) => {
@@ -60,7 +64,7 @@ async function loadCSV() {
 }
 
 /* -----------------------
-   2. ROUTES
+   3. ROUTES
    ----------------------- */
 
 app.get('/api/list-all', async (req, res) => {
@@ -72,7 +76,7 @@ app.post('/api/manual-check', async (req, res) => {
     const { herb, drug } = req.body;
     if (!herb || !drug) return res.status(400).json({ results: [] });
 
-    await loadCSV(); // Ensure we have the latest data
+    await loadCSV();
     const sHerb = herb.toLowerCase().trim();
     const sDrug = drug.toLowerCase().trim();
 
@@ -84,15 +88,15 @@ app.post('/api/manual-check', async (req, res) => {
     res.json({ results: matches });
 });
 
-// AI Bridge: Fixed to handle "detected_entities" fallback
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: "No text provided" });
 
     try {
-        console.log(`🤖 Forwarding to BioBERT: "${text}"`);
+        console.log(`🤖 Forwarding to BioBERT at ${AI_BACKEND_URL}/analyze: "${text}"`);
         
-        const response = await fetch('http://127.0.0.1:8000/analyze', {
+        // Removed hardcoded localhost:8000
+        const response = await fetch(`${AI_BACKEND_URL}/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: text })
@@ -103,19 +107,14 @@ app.post('/api/analyze-text', async (req, res) => {
         const data = await response.json();
         console.log("📥 AI Raw Data received:", data);
 
-        await loadCSV(); // Refresh internal DB from CSV
+        await loadCSV();
         
         let uiResults = [];
-
-        // CASE 1: Python sent a specific interaction result list
         if (data.results && data.results.length > 0) {
             uiResults = data.results;
         } 
-        // CASE 2: Python found entities (like 'atenolol') but no direct "interaction" object
         else if (data.detected_entities && data.detected_entities.length > 0) {
             const firstEntity = data.detected_entities[0].entity.toLowerCase();
-            console.log(`🎯 Searching CSV for detected entity: ${firstEntity}`);
-            
             uiResults = interactionsDB.filter(item => 
                 item.herb.includes(firstEntity) || 
                 item.drug.includes(firstEntity) ||
@@ -124,7 +123,6 @@ app.post('/api/analyze-text', async (req, res) => {
             );
         }
 
-        console.log(`✨ Sending ${uiResults.length} results to Frontend.`);
         res.json({ results: uiResults });
 
     } catch (error) {
@@ -137,13 +135,16 @@ app.post('/api/analyze-text', async (req, res) => {
 });
 
 /* -----------------------
-   3. START SERVER
+   4. START SERVER (Port Fix)
    ----------------------- */
-const PORT = 3000;
+// Render will inject a PORT environment variable. We MUST use it.
+const PORT = process.env.PORT || 3000;
+
 loadCSV().then(() => {
-    app.listen(PORT, () => {
+    // Listening on 0.0.0.0 is critical for Render to detect the open port
+    app.listen(PORT, '0.0.0.0', () => {
         console.log(`\n🚀 Clinical CDSS Online`);
-        console.log(`🔗 Frontend: http://localhost:${PORT}`);
-        console.log(`📡 AI Backend: http://localhost:8000\n`);
+        console.log(`📡 Using AI Backend: ${AI_BACKEND_URL}`);
+        console.log(`🌐 Listening on Port: ${PORT}\n`);
     });
 });

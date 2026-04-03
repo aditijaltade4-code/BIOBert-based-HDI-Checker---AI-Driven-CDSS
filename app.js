@@ -21,6 +21,7 @@ window.manualInteractionCheck = async function() {
     container.innerHTML = `<div class="text-center p-3"><div class="spinner-border spinner-border-sm text-primary"></div> Checking database...</div>`; 
 
     try {
+        // FIXED: Using relative path for Render compatibility
         const response = await fetch('/api/manual-check', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -42,7 +43,7 @@ window.manualInteractionCheck = async function() {
         }
     } catch (error) {
         console.error("❌ API Error:", error);
-        container.innerHTML = `<div class="alert alert-danger">❌ Server Error: Ensure your Node server is running.</div>`;
+        container.innerHTML = `<div class="alert alert-danger">❌ Connection Error: Ensure the service is live on Render.</div>`;
     }
 };
 
@@ -65,9 +66,11 @@ window.runDeepAI = async function() {
         <div class="p-4 text-center">
             <div class="spinner-border text-primary" role="status"></div>
             <p class="mt-2">⌛ BioBERT is analyzing clinical context...</p>
+            <p style="font-size: 0.7rem; color: #666;">(First run may take 20s to wake up AI)</p>
         </div>`;
 
     try {
+        // FIXED: Using relative path
         const response = await fetch('/api/analyze-text', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -77,15 +80,22 @@ window.runDeepAI = async function() {
         if (!response.ok) throw new Error(`Server Error: ${response.status}`);
 
         const data = await response.json();
-        console.log("前端收到 AI 数据:", data); // Debugging log
+        
+        // HANDLE LOADING STATE: If Python returns a 'loading' status from Hugging Face
+        if (data.status === "loading") {
+            resultDiv.innerHTML = `
+                <div class="alert alert-info text-center">
+                    <div class="spinner-grow spinner-grow-sm text-info"></div>
+                    <p class="mb-0"><b>AI is warming up.</b><br>Hugging Face is activating BioBERT. Please wait 15 seconds and click Analyze again.</p>
+                </div>`;
+            return;
+        }
 
         resultDiv.innerHTML = ""; 
         
-        // Check if results exist and have length
         if (data.results && data.results.length > 0) {
             renderResults(data.results, resultDiv);
         } else {
-            // Check if we specifically have a message from the server
             const msg = data.message || "BioBERT analyzed the text but found no recognizable herb-drug pairs.";
             resultDiv.innerHTML = `<div class='alert alert-info'>${msg}</div>`;
         }
@@ -101,6 +111,7 @@ window.runDeepAI = async function() {
 ----------------------------------------------*/
 async function runLocalFallbackScan(text, container) {
     try {
+        // FIXED: Relative path
         const response = await fetch('/api/list-all');
         const data = await response.json();
         const db = data.results || [];
@@ -123,7 +134,6 @@ async function runLocalFallbackScan(text, container) {
     Helper: Universal UI Renderer
 ----------------------------------------------*/
 function renderResults(matches, container) {
-    // If we aren't displaying a fallback alert, clear the container
     if (!container.innerHTML.includes('alert-warning')) {
         container.innerHTML = ""; 
     }
@@ -134,7 +144,7 @@ function renderResults(matches, container) {
     }
 
     matches.forEach(item => {
-        // Handle varying data structures from Python vs Node CSV Parser
+        // Normalize display data
         const displayHerb = (item.herb_raw || item.herb || "Unknown Herb").toUpperCase();
         const displayDrug = (item.drug_raw || item.drug || "Unknown Drug").toUpperCase();
         const displayNote = item.interaction_text || item.mechanism || "Refer to clinical guidelines.";

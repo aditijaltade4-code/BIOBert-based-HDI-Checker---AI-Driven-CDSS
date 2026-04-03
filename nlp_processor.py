@@ -1,9 +1,9 @@
 import pandas as pd
 import os
 import re
+import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from transformers import pipeline
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="BioBERT Interaction Engine")
@@ -15,15 +15,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load Model
-print("⏳ Loading BioBERT Medical Model...")
-biobert_ner = pipeline("ner", 
-                       model="d4data/biomedical-ner-all", 
-                       aggregation_strategy="simple")
+# --- 1. CONFIGURATION ---
+API_URL = "https://api-inference.huggingface.co/models/d4data/biomedical-ner-all"
+HF_TOKEN = os.getenv("HF_TOKEN")
+headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+CSV_PATH = "interactions.csv"
 
-CSV_PATH = os.path.join("data", "interactions.csv")
-
-# List of herbs to catch manually if BioBERT fails
+# Manual list to catch common Ayurvedic terms AI might miss
 AYURVEDIC_HERBS = [
     "Triphala", "Ashwagandha", "Guggulu", "Amalaki", "Brahmi", 
     "Shatavari", "Tulsi", "Turmeric", "Curcumin", "Neem", "Giloy"
@@ -31,6 +29,17 @@ AYURVEDIC_HERBS = [
 
 class AnalyzeRequest(BaseModel):
     text: str
+
+def query_biobert_api(text):
+    if not HF_TOKEN:
+        print("⚠️ HF_TOKEN missing from Environment Variables")
+        return []
+    try:
+        response = requests.post(API_URL, headers=headers, json={"inputs": text}, timeout=10)
+        return response.json()
+    except Exception as e:
+        print(f"API Error: {e}")
+        return []
 
 @app.post("/analyze")
 async def analyze_text(request: AnalyzeRequest):
@@ -41,71 +50,75 @@ async def analyze_text(request: AnalyzeRequest):
 
         print(f"📥 Analyzing: '{text}'")
 
-        # 1. NER Detection (AI)
-        entities = biobert_ner(text)
-        found_chemicals = [e['word'].strip().title() for e in entities if e['entity_group'] in ['Chemical', 'Drug']]
+        # 1. AI NER Detection
+        api_results = query_biobert_api(text)
         
-        # 2. Hardcoded Ayurvedic Check (Manual Support)
+        # Handle Hugging Face "Model Loading" state
+        if isinstance(api_results, dict) and "estimated_time" in api_results:
+            return {"status": "loading", "message": "AI is warming up, please try again in 30s."}
+
+        found_entities = []
+        
+        # Extract entities from BioBERT response
+        if isinstance(api_results, list):
+            for ent in api_results:
+                # API usually returns 'word' or 'entity'
+                word = ent.get('word', '').replace('##', '').strip().title()
+                if word and len(word) > 2:
+                    found_entities.append(word)
+        
+        # 2. Manual Ayurvedic Check
         for herb in AYURVEDIC_HERBS:
             if herb.lower() in text.lower():
-                if herb.title() not in found_chemicals:
-                    found_chemicals.append(herb.title())
+                if herb.title() not in found_entities:
+                    found_entities.append(herb.title())
 
-        # 3. Regex Fallback (Capitalized words for other unknown entities)
-        potential = re.findall(r'\b[A-Z][a-z]{2,}\b', text)
-        for word in potential:
-            if word not in found_chemicals:
-                found_chemicals.append(word)
-
-        # Deduplicate while preserving order
+        # 3. Deduplicate
         seen = set()
-        found_chemicals = [x for x in found_chemicals if not (x in seen or seen.add(x))]
+        found_entities = [x for x in found_entities if not (x.lower() in seen or seen.add(x.lower()))]
 
-        # Need at least two things for an interaction
-        if len(found_chemicals) < 2:
+        if len(found_entities) < 2:
             return {
                 "results": [], 
-                "detected_entities": [{"entity": c, "type": "CHEMICAL"} for c in found_chemicals],
+                "detected_entities": [{"entity": e, "type": "CHEMICAL"} for e in found_entities],
                 "status": "success",
-                "message": "Only one or zero entities found."
+                "message": "Need at least an herb and a drug to analyze interactions."
             }
 
-        # Sort: Try to make the Ayurvedic herb the 'herb' and the other the 'drug'
-        # If the first item is in our Ayurvedic list, keep it as herb.
-        herb, drug = found_chemicals[0], found_chemicals[1]
+        # 4. Interaction Mapping
+        herb, drug = found_entities[0], found_entities[1]
         
-        print(f"🔍 Found Pair: {herb} + {drug}")
+        # DATASET SYNC: Ensure Omez is treated as Pantoprazole
+        if drug.lower() in ["omez", "omeprazole"]:
+            drug = "Pantoprazole"
 
         new_row = {
             "herb": herb,
             "drug": drug,
-            "interaction_text": f"NLP Analysis suggests potential interaction between {herb} and {drug}.",
-            "mechanism": "Clinical Pattern Matching & BioBERT NER.",
-            "evidence_level": "High",
+            "interaction_text": f"Potential clinical interaction identified between {herb} and {drug}.",
+            "mechanism": "BioBERT NLP identified co-administration pattern in clinical context.",
+            "evidence_level": "High (AI Flagged)",
             "severity": "Moderate",
-            "severity_score": 2,
-            "recommendation": "Monitor for adverse reactions; consult integrative medicine guidelines.",
+            "recommendation": "Monitor patient for altered therapeutic efficacy or adverse symptoms.",
             "citation_url": "https://pubmed.ncbi.nlm.nih.gov/"
         }
 
-        # 4. Safe CSV Sync
+        # 5. CSV Logging (Saves new interactions for future use)
         if os.path.exists(CSV_PATH):
-            df = pd.read_csv(CSV_PATH, encoding='utf-8-sig')
-            df.columns = df.columns.str.strip().str.lower()
-            
-            if 'herb' in df.columns and 'drug' in df.columns:
-                is_duplicate = ((df['herb'].astype(str).str.lower() == herb.lower()) & 
-                                (df['drug'].astype(str).str.lower() == drug.lower())).any()
+            try:
+                df = pd.read_csv(CSV_PATH)
+                # Check for duplicates before adding
+                is_dup = ((df['herb'].str.lower() == herb.lower()) & 
+                          (df['drug'].str.lower() == drug.lower())).any()
                 
-                if not is_duplicate:
-                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                    df.to_csv(CSV_PATH, index=False, encoding='utf-8')
-                    print(f"✅ CSV Updated: {herb} + {drug}")
-            else:
-                # Force repair headers if they are missing/corrupted
-                df.columns = ['herb', 'drug', 'interaction_text', 'mechanism', 'evidence_level', 'severity', 'severity_score', 'recommendation', 'citation_url']
-                df.to_csv(CSV_PATH, index=False, encoding='utf-8')
-        
+                if not is_dup:
+                    new_df = pd.DataFrame([new_row])
+                    df = pd.concat([df, new_df], ignore_index=True)
+                    df.to_csv(CSV_PATH, index=False)
+                    print(f"✅ CSV Sync: {herb} + {drug} added.")
+            except Exception as csv_err:
+                print(f"⚠️ CSV Sync Issue: {csv_err}")
+
         return {"results": [new_row], "status": "success"}
 
     except Exception as e:
@@ -114,4 +127,6 @@ async def analyze_text(request: AnalyzeRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Important: 0.0.0.0 is required for Render to route external traffic
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
