@@ -21,14 +21,16 @@ window.manualInteractionCheck = async function() {
     container.innerHTML = `<div class="text-center p-3"><div class="spinner-border spinner-border-sm text-primary"></div> Searching Research Database...</div>`; 
 
     try {
-        // FIX: Combine both names into a single string so the Backend can Normalize them
-        // Your Python @app.post("/analyze") expects { "text": "..." }
-        const queryText = `${herbSearch} and ${drugSearch}`;
-        
-        const response = await fetch('/analyze', { // Change this to match your Python @app.post("/analyze")
+        const API_BASE = "https://biobert-based-hdi-checker-ai-driven-cdss.onrender.com"; 
+
+        const response = await fetch(`${API_BASE}/api/manual-check`, { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: queryText })
+            // Matches Python ManualRequest(herb=str, drug=str)
+            body: JSON.stringify({ 
+                herb: herbSearch, 
+                drug: drugSearch 
+            })
         });
 
         if (!response.ok) throw new Error("Server response error");
@@ -72,19 +74,18 @@ window.runDeepAI = async function() {
         </div>`;
 
     try {
-        // FIX: Route matches Python @app.post("/analyze")
-      // Use the EXACT URL from your Render Dashboard
-const API_BASE = "https://biobert-based-hdi-checker-ai-driven-cdss.onrender.com/"; 
+        const API_BASE = "https://biobert-based-hdi-checker-ai-driven-cdss.onrender.com"; 
 
-const response = await fetch(`${API_BASE}/analyze`, { 
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: noteText })
-});
+        const response = await fetch(`${API_BASE}/api/analyze-text`, { 
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            // Matches Python AnalyzeRequest(text=str)
+            body: JSON.stringify({ text: noteText })
+        });
+
         if (!response.ok) throw new Error(`Server Error: ${response.status}`);
 
         const data = await response.json();
-        
         resultDiv.innerHTML = ""; 
         
         if (data.results && data.results.length > 0) {
@@ -104,14 +105,12 @@ const response = await fetch(`${API_BASE}/analyze`, {
     Helper: Universal UI Renderer
 ----------------------------------------------*/
 function renderResults(matches, container) {
-    // Clear spinner/loading text
     container.innerHTML = ""; 
 
     matches.forEach(item => {
-        // Normalize display data from your CSV columns
         const displayHerb = (item.herb || "Unknown Herb").toUpperCase();
         const displayDrug = (item.drug || "Unknown Drug").toUpperCase();
-        const displayNote = item.interaction_text || "Interaction detected via clinical data.";
+        const displayNote = item.interaction_text || "Interaction detected.";
         const displayMech = item.mechanism || "Metabolic pathway interference.";
         const severity = (item.severity || "Moderate").toUpperCase();
         const recommendation = item.recommendation || "Consult prescribing physician.";
