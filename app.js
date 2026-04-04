@@ -73,12 +73,14 @@ window.runDeepAI = async function() {
 
     try {
         // FIX: Route matches Python @app.post("/analyze")
-        const response = await fetch('/analyze', { 
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: noteText })
-        });
+      // Use the EXACT URL from your Render Dashboard
+const API_BASE = "https://biobert-based-hdi-checker-ai-driven-cdss.onrender.com/"; 
 
+const response = await fetch(`${API_BASE}/analyze`, { 
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: noteText })
+});
         if (!response.ok) throw new Error(`Server Error: ${response.status}`);
 
         const data = await response.json();
