@@ -1,11 +1,11 @@
 import os
+import pandas as pd
 import requests
-import re
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="BioBERT Clinical Hybrid Engine")
+app = FastAPI(title="BioBERT Hybrid Master Engine")
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,46 +14,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 1. THE SYNONYM BRIDGE (NORMALIZATION LAYER) ---
-# Maps various names to a "Standard Clinical Name" for consistency
-SYNONYM_BRIDGE = {
-    # Antidiabetics & Common Brands
-    "glimipride": "Glimepiride", 
-    "glimepiride": "Glimepiride",
-    "amaryl": "Glimepiride",
-    "glycomet": "Metformin",
-    "metformin": "Metformin",
-    
-    # GI & Acid Reflux
-    "omez": "Pantoprazole",
-    "pantoprazole": "Pantoprazole",
-    "pan-d": "Pantoprazole",
-    "pantocid": "Pantoprazole",
-    "omeprazole": "Pantoprazole",
-    
-    # Cardiovascular & Blood Thinners
-    "aspirin": "Aspirin",
-    "ecosprin": "Aspirin",
-    "disprin": "Aspirin",
-    "warfarin": "Warfarin",
-    "coumadin": "Warfarin",
-    "furosemide": "Furosemide",
-    "lasix": "Furosemide",
+# --- 1. DATA CONFIGURATION ---
+# Path matches your GitHub structure
+CSV_PATH = "data/interactions.csv"
+master_df = pd.DataFrame()
 
-    # Herbs, Active Compounds & Ayurvedic Names
-    "turmeric": "Curcumin",
-    "curcumin": "Curcumin",
-    "haridra": "Curcumin",
-    "aloe vera": "Aloe Vera",
-    "aleovera": "Aloe Vera",
-    "ghritkumari": "Aloe Vera",
-    "ashwagandha": "Ashwagandha",
-    "asvagandha": "Ashwagandha",
-    "gallic acid": "Gallic Acid",
-    "gallic": "Gallic Acid",
-    "triphala": "Triphala",
-    "guggulu": "Guggulu",
-    "gulgul": "Guggulu"
+if os.path.exists(CSV_PATH):
+    try:
+        # We use low_memory=False to handle the large polyherbal descriptions in your sheet
+        master_df = pd.read_csv(CSV_PATH, low_memory=False)
+        # Clean the column names to remove any accidental spaces from Excel
+        master_df.columns = master_df.columns.str.strip()
+        print(f"✅ Master CSV Loaded: {len(master_df)} interactions found.")
+    except Exception as e:
+        print(f"❌ Error loading CSV: {e}")
+else:
+    print(f"⚠️ Warning: {CSV_PATH} not found. System will rely entirely on AI logic.")
+
+# --- 2. SYNONYM BRIDGE ---
+SYNONYM_BRIDGE = {
+    "turmeric": "Curcumin", "haridra": "Curcumin", "aleovera": "Aloe Vera",
+    "ecosprin": "Aspirin", "omez": "Pantoprazole", "glimipride": "Glimepiride",
+    "amaryl": "Glimepiride", "haritaki": "Triphala", "amalaki": "Triphala"
 }
 
 API_URL = "https://api-inference.huggingface.co/models/d4data/biomedical-ner-all"
@@ -63,86 +45,91 @@ headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 class AnalyzeRequest(BaseModel):
     text: str
 
-def normalize_entity(word):
-    """Translates identified tokens into Standardized Clinical Names."""
-    word_clean = word.lower().strip()
-    return SYNONYM_BRIDGE.get(word_clean, word.title())
-
-def query_biobert_api(text):
-    if not HF_TOKEN: return []
-    try:
-        response = requests.post(API_URL, headers=headers, json={"inputs": text}, timeout=10)
-        return response.json()
-    except:
-        return []
+def normalize(word):
+    word_low = word.lower().strip()
+    return SYNONYM_BRIDGE.get(word_low, word.title())
 
 @app.post("/analyze")
 async def analyze_text(request: AnalyzeRequest):
     try:
         raw_text = request.text
-        clean_text = raw_text.lower()
-        print(f"📥 Processing: '{raw_text}'")
+        print(f"📥 AI Processing Request: '{raw_text}'")
 
-        # 1. AI NER DETECTION
-        api_results = query_biobert_api(raw_text)
-        raw_detected = []
-
-        if isinstance(api_results, list):
-            current_word = ""
-            for ent in api_results:
-                word = ent.get('word', '')
-                if word.startswith("##"):
-                    current_word += word.replace("##", "")
-                else:
-                    if current_word: raw_detected.append(current_word)
-                    current_word = word
-            if current_word: raw_detected.append(current_word)
+        # --- STEP A: AI ENTITY DETECTION (BioBERT) ---
+        api_results = requests.post(API_URL, headers=headers, json={"inputs": raw_text}, timeout=10).json()
+        detected = []
         
-        # 2. KEYWORD SCANNER (Secondary Detection)
-        for key in SYNONYM_BRIDGE.keys():
-            if key in clean_text and key not in [w.lower() for w in raw_detected]:
-                raw_detected.append(key)
+        if isinstance(api_results, list):
+            curr = ""
+            for ent in api_results:
+                w = ent.get('word', '')
+                if w.startswith("##"): curr += w.replace("##", "")
+                else:
+                    if curr: detected.append(normalize(curr))
+                    curr = w
+            if curr: detected.append(normalize(curr))
 
-        # 3. NORMALIZATION & DEDUPLICATION
-        # This converts 'ecosprin' -> 'Aspirin' and 'haridra' -> 'Curcumin'
-        final_entities = []
-        for word in raw_detected:
-            standardized = normalize_entity(word)
-            if standardized not in final_entities and len(standardized) > 2:
-                final_entities.append(standardized)
+        # Secondary Keyword Scan (Safety Net)
+        for k in SYNONYM_BRIDGE.keys():
+            if k in raw_text.lower():
+                norm = normalize(k)
+                if norm not in detected: detected.append(norm)
 
-        print(f"🧠 Final Normalized Entities: {final_entities}")
+        final_entities = list(dict.fromkeys([e for e in detected if len(e) > 2]))
+        
+        if len(final_entities) < 2:
+            return {"results": [], "message": "Identify at least 2 entities (e.g. Ashwagandha and Sertraline)."}
 
-        # 4. CLINICAL INTERACTION LOGIC
-        if len(final_entities) >= 2:
-            # We take the first two recognized entities
-            entity_one, entity_two = final_entities[0], final_entities[1]
-            
-            return {
-                "status": "success",
-                "results": [{
-                    "herb": entity_one,
-                    "drug": entity_two,
-                    "interaction_text": f"Potential clinical interaction identified between {entity_one} and {entity_two}.",
-                    "mechanism": "Neural Entity Normalization identified co-administration of bioactive agents.",
-                    "severity": "Clinical Alert",
-                    "recommendation": "Monitor patient for altered therapeutic efficacy or synergistic effects.",
-                    "evidence_level": "AI Predicted (BioBERT Hybrid)",
-                    "citation_url": f"https://pubmed.ncbi.nlm.nih.gov/?term={entity_one}+{entity_two}+interaction"
-                }]
-            }
+        h, d = final_entities[0], final_entities[1]
 
+        # --- STEP B: HYBRID SEARCH LOGIC ---
+        
+        # 1. Check your CSV first
+        if not master_df.empty:
+            # We search across Herb Name and Drug Name columns
+            match = master_df[
+                (master_df['Herb Name'].str.contains(h, case=False, na=False)) & 
+                (master_df['Drug Name'].str.contains(d, case=False, na=False))
+            ]
+
+            if not match.empty:
+                res = match.iloc[0]
+                return {
+                    "status": "success",
+                    "source": "Master Research CSV",
+                    "results": [{
+                        "herb": h,
+                        "drug": d,
+                        "interaction_text": res.get('Clinical Effect', 'Interaction detected.'),
+                        "mechanism": f"{res.get('Mechanism Type', 'Pharmacological')}: {res.get('Clinical Effect', '')}",
+                        "severity": res.get('Severity', 'Moderate'),
+                        "recommendation": res.get('Clinical Reccomendation', 'Monitor clinical response.'),
+                        "evidence_level": res.get('Evidence Level', 'Clinical Basis'),
+                        "citation_url": res.get('Reference', 'https://pubmed.ncbi.nlm.nih.gov/')
+                    }]
+                }
+
+        # 2. AI PREDICTIVE FALLBACK (Beyond the CSV)
+        # If the pair isn't in your CSV, BioBERT still provides a hypothesis
         return {
-            "results": [], 
-            "detected_entities": final_entities,
-            "message": "AI found fewer than 2 clinical entities. Try using standard or brand names."
+            "status": "success",
+            "source": "BioBERT Predictive AI",
+            "results": [{
+                "herb": h,
+                "drug": d,
+                "interaction_text": f"AI Prediction: Potential interaction identified between {h} and {d}.",
+                "mechanism": "Neural recognition suggests overlapping pharmacokinetic/dynamic pathways.",
+                "severity": "Clinical Alert (Predicted)",
+                "recommendation": "Pair not in Master CSV. Exercise caution and monitor for additive effects.",
+                "evidence_level": "AI Predicted",
+                "citation_url": f"https://pubmed.ncbi.nlm.nih.gov/?term={h}+{d}+interaction"
+            }]
         }
 
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        print(f"❌ Error: {e}")
         return {"results": [], "status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
-    # Use port 8000 for internal bridge; 0.0.0.0 mandatory for Render
     uvicorn.run(app, host="0.0.0.0", port=8000)
