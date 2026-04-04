@@ -168,9 +168,12 @@ async def analyze_text(request: AnalyzeRequest):
 
     except Exception as e:
         return {"results": [], "status": "error", "message": str(e)}
-        
+    
         if __name__ == "__main__":
     import uvicorn
-    # Render provides a $PORT environment variable
-    port = int(os.environ.get("PORT", 8000)) 
+    import os
+    # Render assigns a dynamic port via environment variables
+    port = int(os.environ.get("PORT", 8000))
+    # host "0.0.0.0" is mandatory for cloud deployment
     uvicorn.run(app, host="0.0.0.0", port=port)
+        
