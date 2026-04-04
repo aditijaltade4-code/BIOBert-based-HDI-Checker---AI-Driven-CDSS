@@ -104,8 +104,13 @@ def get_severity_score(severity_str):
     if any(word in s for word in ['moderate', '2']): return 2
     return 1
 
-@app.post("/analyze")
+@app.post("/api/analyze-text") # Match the frontend call
 async def analyze_text(request: AnalyzeRequest):
+    # ... your logic here ...
+
+@app.post("/api/manual-check") # Match the manual box call
+async def manual_check(request: ManualRequest):
+    # ... your logic here ...
     try:
         raw_text = request.text
         clean_text = raw_text.lower()
