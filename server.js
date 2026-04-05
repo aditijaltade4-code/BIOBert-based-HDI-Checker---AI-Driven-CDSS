@@ -10,7 +10,7 @@ app.use(express.static(path.join(__dirname)));
 // --- 1. CONFIGURATION ---
 const HF_TOKEN = process.env.HF_TOKEN; 
 const HF_API_URL = "https://api-inference.huggingface.co/models/d4data/biomedical-ner-all";
-const CSV_PATH = path.join(__dirname, 'data', 'interactions.csv'); 
+const MASTER_CSV_PATH = path.join(__dirname, 'data', 'HDI_Master_List.csv'); 
 let interactionsDB = [];
 
 // --- 2. EXPANDED SYNONYM BRIDGE ---
@@ -49,36 +49,46 @@ const SYNONYM_BRIDGE = {
 };
 
 /* -----------------------
-   3. DATA LOADER (CSV)
+   3. MASTER DATA LOADER
    ----------------------- */
 async function loadCSV() {
     return new Promise((resolve) => {
-        if (!fs.existsSync(CSV_PATH)) {
-            console.error(`❌ CSV not found at ${CSV_PATH}`);
+        if (!fs.existsSync(MASTER_CSV_PATH)) {
+            console.error(`❌ Master File not found`);
             return resolve(); 
         }
         const results = [];
-        fs.createReadStream(CSV_PATH)
+        fs.createReadStream(MASTER_CSV_PATH)
             .pipe(csv())
             .on('data', (row) => {
                 const getVal = (obj, target) => {
                     const key = Object.keys(obj).find(k => k.trim().toLowerCase() === target.toLowerCase());
                     return key ? obj[key] : '';
                 };
-                results.push({
-                    herb: getVal(row, 'herb').toLowerCase().trim(),
-                    drug: getVal(row, 'drug').toLowerCase().trim(),
-                    interaction_text: getVal(row, 'interaction_text') || getVal(row, 'interaction') || 'Caution advised.',
-                    mechanism: getVal(row, 'mechanism') || 'Automated analysis.',
-                    severity: getVal(row, 'severity') || 'Moderate',
-                    recommendation: getVal(row, 'recommendation') || 'Consult clinical guidelines.',
-                    evidence: getVal(row, 'evidence_level') || 'NLP Extraction',
-                    citation: getVal(row, 'citation_url') || '#'
-                });
+                const herb = getVal(row, 'Herb Name').trim();
+                const drug = getVal(row, 'Drug Name').trim();
+                if (herb && drug) {
+                    results.push({
+                        herb: herb.toLowerCase(),
+                        drug: drug.toLowerCase(),
+                        herb_display: herb,
+                        drug_display: drug,
+                        scientific_name: getVal(row, 'Scientific Name'),
+                        active_ingredients: getVal(row, 'Active Ingredients'),
+                        drug_class: getVal(row, 'Drug Class'),
+                        enzyme: getVal(row, 'Enzyme Target'),
+                        mechanism_type: getVal(row, 'Mechanism Type'),
+                        interaction_type: getVal(row, 'Interactiom Type'),
+                        clinical_effect: getVal(row, 'Clinical Effect'),
+                        severity: getVal(row, 'Severity'),
+                        evidence: getVal(row, 'Evidence Level'),
+                        recommendation: getVal(row, 'Clinical Reccomendation'),
+                        reference: getVal(row, 'Reference')
+                    });
+                }
             })
             .on('end', () => {
                 interactionsDB = results;
-                console.log(`✅ Database Synced: ${interactionsDB.length} records.`);
                 resolve();
             });
     });
@@ -92,29 +102,23 @@ app.post('/api/analyze-text', async (req, res) => {
     if (!text) return res.status(400).json({ error: "No text provided" });
 
     try {
-        console.log(`🤖 Processing: "${text}"`);
         const cleanInput = text.toLowerCase();
         let rawDetected = [];
 
-        // --- STEP 1: SAFETY SCAN (Regex Match for Bridge) ---
-        // We do this first to ensure we don't miss known drugs/herbs
+        // 1. Safety Regex Scan (Deterministic)
         Object.keys(SYNONYM_BRIDGE).forEach(key => {
-            const regex = new RegExp(`\\b${key}\\b`, 'gi'); 
-            if (regex.test(cleanInput)) {
-                rawDetected.push(key);
-            }
+            const regex = new RegExp(`\\b${key}\\b`, 'gi');
+            if (regex.test(cleanInput)) rawDetected.push(key);
         });
 
-        // --- STEP 2: AI NER DETECTION (BioBERT) ---
+        // 2. BioBERT NER (Probabilistic)
         const hfResponse = await fetch(HF_API_URL, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ inputs: text })
         });
-
         const apiResults = await hfResponse.json();
 
-        // BioBERT Subword Reassembly Logic
         if (Array.isArray(apiResults)) {
             let currentWord = "";
             apiResults.forEach(ent => {
@@ -129,73 +133,60 @@ app.post('/api/analyze-text', async (req, res) => {
             if (currentWord.length > 2) rawDetected.push(currentWord);
         }
 
-        // --- STEP 3: NORMALIZATION & DEDUPLICATION ---
+        // 3. STRICT NORMALIZATION & DEDUPLICATION
+        // This converts everything ("haridra", "haldi", etc.) into "Curcumin"
         let finalEntities = [];
         rawDetected.forEach(word => {
             const wordClean = word.toLowerCase().trim();
             const standardized = SYNONYM_BRIDGE[wordClean] || word.charAt(0).toUpperCase() + word.slice(1);
+            
             if (!finalEntities.includes(standardized) && standardized.length > 2) {
                 finalEntities.push(standardized);
             }
         });
 
-        console.log(`🧠 Entities Identified: ${finalEntities}`);
+        console.log(`🧠 Standardized Entities: ${finalEntities}`);
 
-        // --- STEP 4: HYBRID SEARCH & DYNAMIC GENERATION ---
+        // 4. CROSS-MATCHING SEARCH
         await loadCSV();
         let uiResults = [];
 
         if (finalEntities.length >= 2) {
-            // Check all combinations for a CSV match
+            // We loop through all pairs in case the user mentioned 3+ things
             for (let i = 0; i < finalEntities.length; i++) {
                 for (let j = i + 1; j < finalEntities.length; j++) {
-                    const e1 = finalEntities[i].toLowerCase();
-                    const e2 = finalEntities[j].toLowerCase();
+                    const term1 = finalEntities[i].toLowerCase();
+                    const term2 = finalEntities[j].toLowerCase();
 
                     const matches = interactionsDB.filter(item => 
-                        (item.herb.includes(e1) || e1.includes(item.herb) || item.herb.includes(e2) || e2.includes(item.herb)) &&
-                        (item.drug.includes(e1) || e1.includes(item.drug) || item.drug.includes(e2) || e2.includes(item.drug))
+                        (item.herb.includes(term1) || term1.includes(item.herb) || item.herb.includes(term2) || term2.includes(item.herb)) &&
+                        (item.drug.includes(term1) || term1.includes(item.drug) || item.drug.includes(term2) || term2.includes(item.drug))
                     );
                     uiResults.push(...matches);
                 }
             }
         }
 
-        // If no CSV match, generate Dynamic Interaction Alert
+        // 5. Fallback if no CSV match found
         if (uiResults.length === 0 && finalEntities.length >= 2) {
-            const e1 = finalEntities[0];
-            const e2 = finalEntities[1];
             uiResults.push({
-                herb: e1,
-                drug: e2,
-                interaction_text: `Potential clinical interaction identified between ${e1} and ${e2}.`,
-                mechanism: "Neural Entity Normalization identified co-administration of bioactive agents.",
+                herb_display: finalEntities[0],
+                drug_display: finalEntities[1],
+                clinical_effect: "Potential interaction identified by neural mapping.",
                 severity: "Clinical Alert",
-                recommendation: "Monitor patient for altered therapeutic efficacy or synergistic effects.",
-                evidence: "AI Predicted (BioBERT Hybrid)",
-                citation: `https://pubmed.ncbi.nlm.nih.gov/?term=${encodeURIComponent(e1)}+${encodeURIComponent(e2)}+interaction`
+                recommendation: "Review co-administration; specific data not in master CSV.",
+                evidence: "BioBERT Prediction"
             });
         }
 
-        res.json({ 
-            results: uiResults, 
-            detected_entities: finalEntities,
-            message: finalEntities.length < 2 ? "AI found fewer than 2 clinical entities. Please specify both an herb and a drug." : null
-        });
+        res.json({ results: uiResults, detected_entities: finalEntities });
 
     } catch (error) {
-        console.error("❌ System Error:", error.message);
-        res.status(500).json({ error: "Analysis engine unreachable.", results: [] });
+        res.status(500).json({ error: "System Error", results: [] });
     }
 });
 
-/* -----------------------
-   5. START SERVER
-   ----------------------- */
 const PORT = process.env.PORT || 10000;
 loadCSV().then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
-        console.log(`\n🚀 Clinical CDSS Online (Node-Only Mode)`);
-        console.log(`🌐 Listening on Port: ${PORT}\n`);
-    });
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Master CDSS Online`));
 });
