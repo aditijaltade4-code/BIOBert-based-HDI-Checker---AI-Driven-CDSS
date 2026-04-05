@@ -91,41 +91,36 @@ async function fetchPubMed(h, d) {
     } catch (e) { return 0; }
 }
 
-// --- 4. DATA LOADER ---
+// --- 4. DATA LOADER (FIXED: NOW CAPTURES ALL COLUMNS) ---
 async function loadCSV() {
     return new Promise((resolve) => {
-        if (!fs.existsSync(CSV_PATH)) {
-            console.error("❌ CSV file NOT found at", CSV_PATH);
-            return resolve();
-        }
+        if (!fs.existsSync(CSV_PATH)) return resolve();
         interactionsDB = [];
         fs.createReadStream(CSV_PATH)
             .pipe(csv())
             .on('data', (row) => {
-                const keys = Object.keys(row);
-                const hK = keys.find(k => k.toLowerCase().includes('herb'));
-                const dK = keys.find(k => k.toLowerCase().includes('drug'));
-                const eK = keys.find(k => k.toLowerCase().includes('effect'));
-                const rK = keys.find(k => k.toLowerCase().includes('recom'));
-                
-                if (row[hK] && row[dK]) {
-                    interactionsDB.push({
-                        herb: String(row[hK]).trim().toLowerCase(),
-                        drug: String(row[dK]).trim().toLowerCase(),
-                        clinical_effect: row[eK] || "No effect documented.",
-                        recommendation: row[rK] || "Monitor clinical status.",
-                        severity: row['Severity'] || "Moderate",
-                        source: "Verified Master Database"
-                    });
-                }
+                // Mapping the dynamic columns from your HD Master File
+                const entry = {
+                    herb: (row['Herb'] || row['herb'] || "").toLowerCase().trim(),
+                    drug: (row['Drug'] || row['drug'] || "").toLowerCase().trim(),
+                    clinical_effect: row['Clinical Effect'] || row['Effect'] || "No effect documented.",
+                    recommendation: row['Recommendation'] || row['Recom'] || "Monitor clinical status.",
+                    severity: row['Severity'] || "Moderate",
+                    // --- NEW: Capturing the technical data you requested ---
+                    mechanism: row['Mechanism'] || row['Interaction Mechanism'] || "N/A",
+                    interaction_type: row['Interaction Type'] || "N/A",
+                    evidence: row['Evidence'] || "N/A",
+                    pk_pd: row['Pharmacokinetics/Pharmacodynamics'] || row['PK/PD'] || "N/A",
+                    source: "HD Master Database"
+                };
+                if (entry.herb && entry.drug) interactionsDB.push(entry);
             })
             .on('end', () => {
-                console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records.`);
+                console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records with full technical data.`);
                 resolve();
             });
     });
 }
-
 // --- 5. ROUTES ---
 app.get('/api/list-all', (req, res) => res.json(interactionsDB));
 
