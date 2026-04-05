@@ -91,32 +91,55 @@ async function fetchPubMed(h, d) {
     } catch (e) { return 0; }
 }
 
-// --- 4. DATA LOADER (FIXED: NOW CAPTURES ALL COLUMNS) ---
+// --- 4. DATA LOADER (REPAIRED: UNIVERSAL HEADER SEARCH) ---
 async function loadCSV() {
     return new Promise((resolve) => {
-        if (!fs.existsSync(CSV_PATH)) return resolve();
+        if (!fs.existsSync(CSV_PATH)) {
+            console.error("❌ CSV file NOT found at", CSV_PATH);
+            return resolve();
+        }
+        
         interactionsDB = [];
         fs.createReadStream(CSV_PATH)
             .pipe(csv())
             .on('data', (row) => {
-                // Mapping the dynamic columns from your HD Master File
+                const keys = Object.keys(row);
+
+                // This logic finds the column even if it is "Herb", "herb", "HERB", or "Herb Name"
+                const findKey = (name) => keys.find(k => k.toLowerCase().replace(/[^a-z]/g, '').includes(name.toLowerCase()));
+
+                const hK = findKey('herb');
+                const dK = findKey('drug');
+                const eK = findKey('effect');
+                const rK = findKey('recom');
+                const mK = findKey('mechanism');
+                const tK = findKey('type');
+                const evK = findKey('evidence');
+                const pkK = findKey('pkpd') || findKey('pharmacokinetic');
+
                 const entry = {
-                    herb: (row['Herb'] || row['herb'] || "").toLowerCase().trim(),
-                    drug: (row['Drug'] || row['drug'] || "").toLowerCase().trim(),
-                    clinical_effect: row['Clinical Effect'] || row['Effect'] || "No effect documented.",
-                    recommendation: row['Recommendation'] || row['Recom'] || "Monitor clinical status.",
-                    severity: row['Severity'] || "Moderate",
-                    // --- NEW: Capturing the technical data you requested ---
-                    mechanism: row['Mechanism'] || row['Interaction Mechanism'] || "N/A",
-                    interaction_type: row['Interaction Type'] || "N/A",
-                    evidence: row['Evidence'] || "N/A",
-                    pk_pd: row['Pharmacokinetics/Pharmacodynamics'] || row['PK/PD'] || "N/A",
+                    herb: (row[hK] || "").toLowerCase().trim(),
+                    drug: (row[dK] || "").toLowerCase().trim(),
+                    clinical_effect: row[eK] || "No effect documented.",
+                    recommendation: row[rK] || "Monitor clinical status.",
+                    severity: row['Severity'] || row['severity'] || "Moderate",
+                    mechanism: row[mK] || "N/A",
+                    interaction_type: row[tK] || "N/A",
+                    evidence: row[evK] || "N/A",
+                    pk_pd: row[pkK] || "N/A",
                     source: "HD Master Database"
                 };
-                if (entry.herb && entry.drug) interactionsDB.push(entry);
+
+                if (entry.herb && entry.drug) {
+                    interactionsDB.push(entry);
+                }
             })
             .on('end', () => {
-                console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records with full technical data.`);
+                if (interactionsDB.length === 0) {
+                    console.warn("⚠️ DATABASE LOADED: 0 records. Check if CSV headers match 'Herb' and 'Drug'.");
+                } else {
+                    console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records with full technical data.`);
+                }
                 resolve();
             });
     });
