@@ -175,6 +175,19 @@ app.post('/api/analyze-text', async (req, res) => {
         res.json({ results, detected_entities: finalEntities });
     } catch (e) { res.status(500).json({ error: "Fail" }); }
 });
-
+// --- 8. DASHBOARD STATS ROUTE ---
+app.get('/api/dashboard-stats', (req, res) => {
+    try {
+        const stats = {
+            totalInteractions: interactionsDB.length,
+            herbsCovered: Object.keys(herbProfiles).length,
+            drugsCovered: Object.keys(drugProfiles).length,
+            evidenceLevel: "High (Hybrid AI + PubMed)"
+        };
+        res.json(stats);
+    } catch (error) {
+        res.status(500).json({ error: "Could not load stats" });
+    }
+});
 const PORT = process.env.PORT || 10000;
 loadCSV().then(() => app.listen(PORT, '0.0.0.0', () => console.log("🚀 Hybrid Engine Live")));
