@@ -22,7 +22,7 @@ try {
     console.warn("⚠️ JSON profiles missing or malformed."); 
 }
 
-// --- 2. THE COMPREHENSIVE SYNONYM BRIDGE (EXTRACTED FROM MASTER FILE) ---
+// --- 2. THE COMPREHENSIVE SYNONYM BRIDGE ---
 const SYNONYM_BRIDGE = {
     // --- DRUGS & BRANDS ---
     "metformin": { name: "Metformin", type: "drug" }, "glycomet": { name: "Metformin", type: "drug" },
@@ -60,16 +60,26 @@ const SYNONYM_BRIDGE = {
     "black pepper": { name: "Black pepper", type: "herb" }, "piper nigrum": { name: "Black pepper", type: "herb" }
 };
 
-// --- 3. EXTERNAL API LOGIC ---
+// --- 3. EXTERNAL API LOGIC (UPDATED FOR YOUR MODEL) ---
 async function queryBioBERT(text) {
     try {
-        const response = await fetch("https://api-inference.huggingface.co/models/dmis-lab/biobert-v1.1", {
-            headers: { Authorization: `Bearer ${process.env.HF_TOKEN}`, "Content-Type": "application/json" },
+        const response = await fetch("https://api-inference.huggingface.co/models/aditijaltade4/BIOBert-based-HDI-Checker", {
+            headers: { 
+                Authorization: `Bearer ${process.env.HF_TOKEN}`, 
+                "Content-Type": "application/json" 
+            },
             method: "POST",
-            body: JSON.stringify({ inputs: text }),
+            body: JSON.stringify({ 
+                inputs: text,
+                options: { wait_for_model: true } // Ensures the 433MB model loads before replying
+            }),
         });
-        return await response.json();
-    } catch (e) { return null; }
+        const result = await response.json();
+        return result;
+    } catch (e) { 
+        console.error("BioBERT Query Error:", e);
+        return null; 
+    }
 }
 
 async function fetchPubMed(h, d) {
@@ -127,7 +137,7 @@ app.post('/api/analyze-text', async (req, res) => {
     let detectedHerbs = [];
     let detectedDrugs = [];
 
-    // Entity Detection via Synonym Bridge
+    // Entity Detection
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
             const entry = SYNONYM_BRIDGE[key];
@@ -139,16 +149,15 @@ app.post('/api/analyze-text', async (req, res) => {
     const h = detectedHerbs[0] || "unknown";
     const d = detectedDrugs[0] || "unknown";
 
-    // 🔴 GATEKEEPER: STOP UNKNOWN + UNKNOWN
     if (h === "unknown" && d === "unknown") {
         return res.json({ 
             results: [], 
             entities: [h, d], 
-            message: "I could not identify a specific herb and drug interaction in your request." 
+            message: "I could not identify a specific herb and drug interaction." 
         });
     }
 
-    // --- WATERFALL 1: MASTER CSV ---
+    // Waterfall 1: Local Master CSV
     const csvMatch = interactionsDB.find(i => {
         const findH = h.toLowerCase();
         const findD = d.toLowerCase();
@@ -160,27 +169,32 @@ app.post('/api/analyze-text', async (req, res) => {
         return res.json({ results: [csvMatch], entities: [h, d] });
     }
 
-    // --- WATERFALL 2: PUBMED & BIOBERT ---
-    // Only triggers if at least one entity is known
+    // Waterfall 2: PubMed & Trained BioBERT
     const pCount = await fetchPubMed(h, d);
     const aiResponse = await queryBioBERT(text);
 
-    if (pCount > 0 || (aiResponse && !aiResponse.error)) {
+    // Logic for your fine-tuned model's labels
+    const hasAIInteraction = Array.isArray(aiResponse) && 
+                            aiResponse[0] && 
+                            aiResponse[0][0].label === "LABEL_1" && 
+                            aiResponse[0][0].score > 0.7;
+
+    if (pCount > 0 || hasAIInteraction) {
         return res.json({
             results: [{
-                source: `BioBERT AI Analysis (PubMed Count: ${pCount})`,
-                severity: pCount > 0 ? "EVIDENCE-BASED" : "PREDICTIVE",
+                source: `BioBERT AI Prediction (Confidence: ${hasAIInteraction ? Math.round(aiResponse[0][0].score * 100) : 0}%)`,
+                severity: "MODERATE (AI Predicted)",
                 clinical_effect: pCount > 0 
-                    ? `AI engine found ${pCount} literature matches for ${h} and ${d}.` 
-                    : `BioBERT identifies high-risk interaction patterns in the text for ${h} and ${d}.`,
-                recommendation: "Review with clinical pharmacist; research suggests potential interaction.",
-                data: aiResponse
+                    ? `Found ${pCount} literature matches. Possible interaction detected.` 
+                    : `AI identified high-risk pharmacokinetic interaction patterns for ${h} and ${d}.`,
+                recommendation: "Consult a pharmacist; potential metabolic pathway overlap detected.",
+                pubmed_count: pCount
             }],
             entities: [h, d]
         });
     }
 
-    // --- WATERFALL 3: PK Path ---
+    // Waterfall 3: PK Pathway
     const hProf = herbProfiles[h.toLowerCase()];
     const dProf = drugProfiles[d.toLowerCase()];
     if (hProf?.enzymes && dProf?.enzymes) {
@@ -198,7 +212,7 @@ app.post('/api/analyze-text', async (req, res) => {
         }
     }
 
-    res.json({ results: [], entities: [h, d], message: "No interaction found in local DB or medical literature." });
+    res.json({ results: [], entities: [h, d], message: "No interaction found in local DB or AI analysis." });
 });
 
 const PORT = process.env.PORT || 10000;
