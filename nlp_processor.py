@@ -121,6 +121,6 @@ async def analyze_text(request: AnalyzeRequest):
 
 # --- RENDER PORT BINDING FIX ---
 if __name__ == "__main__":
-    # Render assigns a port dynamically. Using port 8000 hardcoded causes 'Offline' errors.
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # We hardcode 8080 because this is INTERNAL. 
+    # Node will talk to Python on this port.
+    uvicorn.run(app, host="127.0.0.1", port=8080)
