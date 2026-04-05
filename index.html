@@ -38,14 +38,17 @@
 
             <section class="card animate__animated animate__fadeIn" style="animation-delay: 0.1s;">
                 <div class="section-header">
-                    <h2>Clinical Note Analysis (BioBERT)</h2>
-                    <span class="ai-tag">Neural Processing</span>
+                    <h2>Clinical Note Analysis (BioBERT & Literature)</h2>
+                    <span class="ai-tag">Neural Processing + PubMed</span>
                 </div>
-                <p class="section-desc">Extract pharmacological entities from unstructured clinical notes to detect hidden risks.</p>
+                <p class="section-desc">Extract pharmacological entities and scan live literature to detect hidden risks.</p>
                 <div class="ai-input-wrapper">
                     <label for="clinicalNoteInput">Paste EHR Text or Prescription Notes</label>
                     <textarea id="clinicalNoteInput" rows="4" placeholder="Example: Patient is on Amlodipine 5mg but also started taking Guggulu for cholesterol management..."></textarea>
-                    <button onclick="runDeepAI()" class="btn-ai">Execute Clinical AI Scan</button>
+                    <button id="aiBtn" onclick="runDeepAI()" class="btn-ai">Execute Clinical AI Scan</button>
+                </div>
+                <div id="pubmedStatus" style="display:none; margin-top:10px; font-size:0.85em; color:#007bff;">
+                    🔍 Scanning PubMed Literature...
                 </div>
                 <div id="aiScanResults" class="results-area"></div>
             </section>
@@ -53,7 +56,7 @@
             <section class="card dashboard animate__animated animate__fadeIn" style="animation-delay: 0.2s;">
                 <div class="dashboard-header">
                     <h2>Risk & Evidence Dashboard</h2>
-                    <span id="dbSyncStatus" class="sync-tag">Synced with HDI_Master_List.csv</span>
+                    <span id="dbSyncStatus" class="sync-tag">Live Express Data Stream</span>
                 </div>
                 
                 <div class="dashboard-grid">
@@ -81,7 +84,7 @@
         
         <footer>
             <div class="footer-content">
-                <p>&copy; 2026 Clinical Informatics Research | Powered by BioBERT NLP & Master HDI Dataset</p>
+                <p>&copy; 2026 Clinical Informatics Research | Powered by BioBERT NLP & PubMed Engine</p>
                 <p class="disclaimer">
                     <strong>Institutional Disclaimer:</strong> This system is a Decision Support Tool intended for research and educational purposes. 
                     Final clinical decisions should be based on peer-reviewed literature and professional medical judgment.
