@@ -153,7 +153,11 @@ async def manual_check(request: ManualRequest):
     # Combine herb and drug into one string for the search engine
     return process_search(f"{request.herb} and {request.drug}")
 
-# --- 4. STARTUP (OUTSIDE ALL FUNCTIONS) ---
+# --- STARTUP LOGIC ---
 if __name__ == "__main__":
+    import uvicorn
+    import os
+    # Render provides the port via an environment variable
     port = int(os.environ.get("PORT", 8000))
+    # We bind to 0.0.0.0 so the frontend can reach the container
     uvicorn.run(app, host="0.0.0.0", port=port)
