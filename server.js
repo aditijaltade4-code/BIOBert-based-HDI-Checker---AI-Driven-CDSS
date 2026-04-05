@@ -129,7 +129,19 @@ async function loadCSV() {
             });
     });
 }
-
+/* -----------------------
+   DASHBOARD API ROUTE (Fixes 404 Error)
+   ----------------------- */
+app.get('/api/list-all', (req, res) => {
+    if (interactionsDB.length > 0) {
+        res.json({ results: interactionsDB });
+    } else {
+        res.status(404).json({ 
+            error: "Interaction database is empty or still loading.",
+            details: "Ensure HDI_Master_List.csv is in the /data folder."
+        });
+    }
+});
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: "No text" });
