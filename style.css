@@ -6,6 +6,9 @@
     --low-risk: #27ae60;
     --bg: #f4f7f6;
     --card-shadow: 0 4px 15px rgba(0,0,0,0.08);
+    /* Added clinical colors */
+    --evidence-blue: #3498db;
+    --verified-green: #27ae60;
 }
 
 /* GENERAL SETUP */
@@ -68,7 +71,7 @@ header p {
     display: flex;
     gap: 15px;
     align-items: center;
-    margin-bottom: 20px; /* Added spacing below form */
+    margin-bottom: 20px; 
 }
 
 textarea, input {
@@ -97,7 +100,7 @@ button {
     cursor: pointer;
     transition: all 0.2s ease;
     display: inline-block;
-    white-space: nowrap; /* Prevents button text from wrapping */
+    white-space: nowrap; 
 }
 
 button:hover {
@@ -119,14 +122,23 @@ button:hover {
     min-height: 20px;
 }
 
-.interaction-result-card {
+.interaction-card {
     transition: all 0.3s ease;
-    animation: fadeIn 0.4s ease-in-out;
+    animation: fadeInUp 0.4s ease-in-out;
 }
 
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
+/* WATERFALL STATUS STYLING */
+#waterfallStatus span {
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: #f8f9fa;
+    transition: all 0.3s ease;
+}
+
+#waterfallStatus span.active {
+    background: var(--accent);
+    color: white;
+    font-weight: bold;
 }
 
 /* DASHBOARD & CHARTS */
@@ -159,6 +171,11 @@ button:hover {
     0% { opacity: 1; }
     50% { opacity: 0.5; }
     100% { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 /* MOBILE RESPONSIVENESS */
