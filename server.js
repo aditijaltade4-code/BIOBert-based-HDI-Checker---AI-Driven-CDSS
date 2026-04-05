@@ -24,7 +24,7 @@ try {
     console.error("⚠️ Profiles not found. Check if herb_profiles.json and drug_profiles.json exist in root.");
 }
 
-// --- 2. EXPANDED SYNONYM BRIDGE ---
+// --- 2. MASTER SYNONYM BRIDGE (Optimized for PK Logic) ---
 const SYNONYM_BRIDGE = {
     // Cardiovascular
     "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
@@ -33,17 +33,71 @@ const SYNONYM_BRIDGE = {
     "warfarin": "Warfarin", "coumadin": "Warfarin",
     "aspirin": "Aspirin", "ecosprin": "Aspirin", "disprin": "Aspirin",
 
-    // Gastric
-    "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", "omez": "Pantoprazole",
-    "omeprazole": "Omeprazole",
+    // Gastric (Note: Omez/Pantocid now map to Pantoprazole per your dataset)
+    "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", 
+    "omez": "Pantoprazole", "omeprazole": "Omeprazole",
 
-    // Herbs & Constituents
-    "guggulsterone": "Guggulu", "guggulsterones": "Guggulu", "guggul": "Guggulu", "commiphora": "Guggulu", "guggulu": "Guggulu",
-    "turmeric": "Curcumin", "curcumin": "Curcumin", "haridra": "Curcumin", "haldi": "Curcumin",
-    "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha", "withania": "Ashwagandha",
-    "brahmi": "Brahmi", "bacopa": "Brahmi",
-    "triphala": "Triphala", "amla": "Triphala",
-    "gallic acid": "Gallic Acid" 
+    // --- HERBS (Mapped to JSON Keys) ---
+    // Acorus calamus / Vacha
+    "acorus calamus": "Acorus calamus", "vacha": "Acorus calamus", "sweet flag": "Acorus calamus",
+    
+    // Aesculus indica
+    "aesculus indica": "Aesculus indica", "indian horse chestnut": "Aesculus indica",
+    
+    // Allium sativum / Garlic
+    "allium sativum": "Allium sativum", "garlic": "Allium sativum", "lahsun": "Allium sativum",
+    
+    // Andrographis paniculata / Kalmegh
+    "andrographis paniculata": "Andrographis paniculata", "kalmegh": "Andrographis paniculata", "king of bitters": "Andrographis paniculata",
+    
+    // Berberis aristata / Daruharidra
+    "berberis aristata": "Berberis aristata", "daruharidra": "Berberis aristata", "tree turmeric": "Berberis aristata",
+    
+    // Carum carvi
+    "carum carvi": "Carum carvi", "krishna jeeraka": "Carum carvi", "caraway": "Carum carvi",
+    
+    // Centella asiatica / Mandukaparni
+    "centella asiatica": "Centella asiatica", "mandukaparni": "Centella asiatica", "gotu kola": "Centella asiatica",
+    
+    // Commiphora wightii / Guggulu
+    "commiphora wightii": "Commiphora wightii", "guggulu": "Commiphora wightii", "guggul": "Commiphora wightii", "commiphora": "Commiphora wightii", "guggulsterone": "Commiphora wightii",
+    
+    // Curcuma longa / Haridra
+    "curcuma longa": "Curcuma longa", "haridra": "Curcuma longa", "turmeric": "Curcuma longa", "haldi": "Curcuma longa",
+    
+    // Curcumin
+    "curcumin": "Curcumin", "curcuminoids": "Curcumin",
+    
+    // Glycyrrhiza glabra / Yashtimadhu
+    "glycyrrhiza glabra": "Glycyrrhiza glabra", "yashtimadhu": "Glycyrrhiza glabra", "licorice": "Glycyrrhiza glabra", "mulethi": "Glycyrrhiza glabra",
+    
+    // Myristica fragrans / Jatiphala
+    "myristica fragrans": "Myristica fragrans", "jatiphala": "Myristica fragrans", "nutmeg": "Myristica fragrans",
+    
+    // Narthex asafetida / Hing
+    "narthex asafetida": "Narthex asafetida", "hing": "Narthex asafetida", "asafoetida": "Narthex asafetida",
+    
+    // Phyllanthus amarus / Bhumyamalaki
+    "phyllanthus amarus": "Phyllanthus amarus", "bhumyamalaki": "Phyllanthus amarus",
+    
+    // Salacia reticulata / Saptarangi
+    "salacia reticulata": "Salacia reticulata", "saptarangi": "Salacia reticulata",
+    
+    // Terminalia arjuna
+    "terminalia arjuna": "Terminalia arjuna", "arjuna": "Terminalia arjuna",
+    
+    // Terminalia chebula
+    "terminalia chebula": "Terminalia chebula", "haritaki": "Terminalia chebula",
+    
+    // Brahmi
+    "brahmi": "Brahmi", "bacopa monnieri": "Brahmi", "bacopa": "Brahmi",
+    
+    // Triphala
+    "triphala": "Triphala", "amla": "Triphala", "triphala churna": "Triphala", "three fruits": "Triphala",
+
+    // Others
+    "gallic acid": "Gallic Acid",
+    "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha", "withania": "Ashwagandha"
 };
 
 /* -----------------------
