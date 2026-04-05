@@ -14,7 +14,6 @@ const MASTER_CSV_PATH = path.join(__dirname, 'data', 'HDI_Master_List.csv');
 let interactionsDB = [];
 
 // --- 2. EXPANDED SYNONYM BRIDGE ---
-// Added common Ayurvedic herbs, modern drugs, and frequent brand names
 const SYNONYM_BRIDGE = {
     // Cardiovascular / Blood Pressure
     "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
@@ -54,7 +53,7 @@ const SYNONYM_BRIDGE = {
 async function loadCSV() {
     return new Promise((resolve) => {
         if (!fs.existsSync(MASTER_CSV_PATH)) {
-            console.error(`❌ Master File not found`);
+            console.error(`❌ Master File not found at ${MASTER_CSV_PATH}`);
             return resolve(); 
         }
         const results = [];
@@ -89,13 +88,25 @@ async function loadCSV() {
             })
             .on('end', () => {
                 interactionsDB = results;
+                console.log(`✅ Master Database Loaded: ${interactionsDB.length} interactions.`);
                 resolve();
             });
     });
 }
 
 /* -----------------------
-   4. HYBRID AI LOGIC
+   4. DASHBOARD API ROUTE (FIXES 404 ERROR)
+   ----------------------- */
+app.get('/api/list-all', (req, res) => {
+    if (interactionsDB.length > 0) {
+        res.json({ results: interactionsDB });
+    } else {
+        res.status(404).json({ error: "Interaction database is currently empty or loading." });
+    }
+});
+
+/* -----------------------
+   5. HYBRID AI LOGIC
    ----------------------- */
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
@@ -112,29 +123,32 @@ app.post('/api/analyze-text', async (req, res) => {
         });
 
         // 2. BioBERT NER (Probabilistic)
-        const hfResponse = await fetch(HF_API_URL, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ inputs: text })
-        });
-        const apiResults = await hfResponse.json();
-
-        if (Array.isArray(apiResults)) {
-            let currentWord = "";
-            apiResults.forEach(ent => {
-                const word = ent.word || "";
-                if (word.startsWith("##")) {
-                    currentWord += word.replace("##", "");
-                } else {
-                    if (currentWord.length > 2) rawDetected.push(currentWord);
-                    currentWord = word;
-                }
+        try {
+            const hfResponse = await fetch(HF_API_URL, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inputs: text })
             });
-            if (currentWord.length > 2) rawDetected.push(currentWord);
+            const apiResults = await hfResponse.json();
+
+            if (Array.isArray(apiResults)) {
+                let currentWord = "";
+                apiResults.forEach(ent => {
+                    const word = ent.word || "";
+                    if (word.startsWith("##")) {
+                        currentWord += word.replace("##", "");
+                    } else {
+                        if (currentWord.length > 2) rawDetected.push(currentWord);
+                        currentWord = word;
+                    }
+                });
+                if (currentWord.length > 2) rawDetected.push(currentWord);
+            }
+        } catch (nerError) {
+            console.warn("⚠️ NER API skipped or failed, relying on Synonym Bridge.");
         }
 
         // 3. STRICT NORMALIZATION & DEDUPLICATION
-        // This converts everything ("haridra", "haldi", etc.) into "Curcumin"
         let finalEntities = [];
         rawDetected.forEach(word => {
             const wordClean = word.toLowerCase().trim();
@@ -145,14 +159,9 @@ app.post('/api/analyze-text', async (req, res) => {
             }
         });
 
-        console.log(`🧠 Standardized Entities: ${finalEntities}`);
-
         // 4. CROSS-MATCHING SEARCH
-        await loadCSV();
         let uiResults = [];
-
         if (finalEntities.length >= 2) {
-            // We loop through all pairs in case the user mentioned 3+ things
             for (let i = 0; i < finalEntities.length; i++) {
                 for (let j = i + 1; j < finalEntities.length; j++) {
                     const term1 = finalEntities[i].toLowerCase();
@@ -167,7 +176,7 @@ app.post('/api/analyze-text', async (req, res) => {
             }
         }
 
-        // 5. Fallback if no CSV match found
+        // 5. Fallback
         if (uiResults.length === 0 && finalEntities.length >= 2) {
             uiResults.push({
                 herb_display: finalEntities[0],
@@ -182,11 +191,19 @@ app.post('/api/analyze-text', async (req, res) => {
         res.json({ results: uiResults, detected_entities: finalEntities });
 
     } catch (error) {
+        console.error("Critical System Error:", error);
         res.status(500).json({ error: "System Error", results: [] });
     }
 });
 
+/* -----------------------
+   6. SERVER INITIALIZATION
+   ----------------------- */
 const PORT = process.env.PORT || 10000;
+
+// Important: Load the CSV before starting the listener
 loadCSV().then(() => {
-    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Master CDSS Online`));
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Master CDSS Engine Live on Port ${PORT}`);
+    });
 });
