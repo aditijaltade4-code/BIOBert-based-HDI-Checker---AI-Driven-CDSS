@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const csv = require('csv-parser');
+const fetch = require('node-fetch');
 
 const app = express();
 app.use(express.json());
@@ -14,273 +15,166 @@ let interactionsDB = [];
 let herbProfiles = {};
 let drugProfiles = {};
 
-// Load JSON Profiles from Root
 try {
-    // Using require for cleaner JSON loading
     herbProfiles = require('./herb_profiles.json');
     drugProfiles = require('./drug_profiles.json');
-    console.log("✅ Herb and Drug Profiles loaded successfully.");
+    console.log("✅ Profiles loaded.");
 } catch (e) {
-    console.error("⚠️ Profiles not found. Check if herb_profiles.json and drug_profiles.json exist in root.");
+    console.error("⚠️ JSON profiles missing.");
 }
 
-// --- 2. MASTER SYNONYM BRIDGE (Optimized for PK Logic) ---
+// --- 2. SYNONYM BRIDGE (Keep as is) ---
 const SYNONYM_BRIDGE = {
-    // Cardiovascular
     "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
     "telmisartan": "Telmisartan", "telma": "Telmisartan", "telvas": "Telmisartan",
     "atorvastatin": "Atorvastatin", "atorva": "Atorvastatin", "lipvas": "Atorvastatin",
     "warfarin": "Warfarin", "coumadin": "Warfarin",
     "aspirin": "Aspirin", "ecosprin": "Aspirin", "disprin": "Aspirin",
-
-    // Gastric (Note: Omez/Pantocid now map to Pantoprazole per your dataset)
     "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", 
     "omez": "Pantoprazole", "omeprazole": "Omeprazole",
-
-    // --- HERBS (Mapped to JSON Keys) ---
-    // Acorus calamus / Vacha
-    "acorus calamus": "Acorus calamus", "vacha": "Acorus calamus", "sweet flag": "Acorus calamus",
-    
-    // Aesculus indica
-    "aesculus indica": "Aesculus indica", "indian horse chestnut": "Aesculus indica",
-    
-    // Allium sativum / Garlic
-    "allium sativum": "Allium sativum", "garlic": "Allium sativum", "lahsun": "Allium sativum",
-    
-    // Andrographis paniculata / Kalmegh
-    "andrographis paniculata": "Andrographis paniculata", "kalmegh": "Andrographis paniculata", "king of bitters": "Andrographis paniculata",
-    
-    // Berberis aristata / Daruharidra
-    "berberis aristata": "Berberis aristata", "daruharidra": "Berberis aristata", "tree turmeric": "Berberis aristata",
-    
-    // Carum carvi
-    "carum carvi": "Carum carvi", "krishna jeeraka": "Carum carvi", "caraway": "Carum carvi",
-    
-    // Centella asiatica / Mandukaparni
-    "centella asiatica": "Centella asiatica", "mandukaparni": "Centella asiatica", "gotu kola": "Centella asiatica",
-    
-    // Commiphora wightii / Guggulu
-    "commiphora wightii": "Commiphora wightii", "guggulu": "Commiphora wightii", "guggul": "Commiphora wightii", "commiphora": "Commiphora wightii", "guggulsterone": "Commiphora wightii",
-    
-    // Curcuma longa / Haridra
+    "acorus calamus": "Acorus calamus", "vacha": "Acorus calamus",
+    "aesculus indica": "Aesculus indica", "allium sativum": "Allium sativum",
+    "andrographis paniculata": "Andrographis paniculata", "kalmegh": "Andrographis paniculata",
+    "berberis aristata": "Berberis aristata", "daruharidra": "Berberis aristata",
+    "carum carvi": "Carum carvi", "krishna jeeraka": "Carum carvi",
+    "centella asiatica": "Centella asiatica", "mandukaparni": "Centella asiatica",
+    "commiphora wightii": "Commiphora wightii", "guggulu": "Commiphora wightii",
     "curcuma longa": "Curcuma longa", "haridra": "Curcuma longa", "turmeric": "Curcuma longa", "haldi": "Curcuma longa",
-    
-    // Curcumin
     "curcumin": "Curcumin", "curcuminoids": "Curcumin",
-    
-    // Glycyrrhiza glabra / Yashtimadhu
-    "glycyrrhiza glabra": "Glycyrrhiza glabra", "yashtimadhu": "Glycyrrhiza glabra", "licorice": "Glycyrrhiza glabra", "mulethi": "Glycyrrhiza glabra",
-    
-    // Myristica fragrans / Jatiphala
-    "myristica fragrans": "Myristica fragrans", "jatiphala": "Myristica fragrans", "nutmeg": "Myristica fragrans",
-    
-    // Narthex asafetida / Hing
-    "narthex asafetida": "Narthex asafetida", "hing": "Narthex asafetida", "asafoetida": "Narthex asafetida",
-    
-    // Phyllanthus amarus / Bhumyamalaki
+    "glycyrrhiza glabra": "Glycyrrhiza glabra", "yashtimadhu": "Glycyrrhiza glabra", "mulethi": "Glycyrrhiza glabra",
+    "myristica fragrans": "Myristica fragrans", "jatiphala": "Myristica fragrans",
+    "narthex asafetida": "Narthex asafetida", "hing": "Narthex asafetida",
     "phyllanthus amarus": "Phyllanthus amarus", "bhumyamalaki": "Phyllanthus amarus",
-    
-    // Salacia reticulata / Saptarangi
     "salacia reticulata": "Salacia reticulata", "saptarangi": "Salacia reticulata",
-    
-    // Terminalia arjuna
     "terminalia arjuna": "Terminalia arjuna", "arjuna": "Terminalia arjuna",
-    
-    // Terminalia chebula
     "terminalia chebula": "Terminalia chebula", "haritaki": "Terminalia chebula",
-    
-    // Brahmi
-    "brahmi": "Brahmi", "bacopa monnieri": "Brahmi", "bacopa": "Brahmi",
-    
-    // Triphala
-    "triphala": "Triphala", "amla": "Triphala", "triphala churna": "Triphala", "three fruits": "Triphala",
-
-    // Others
-    "gallic acid": "Gallic Acid",
-    "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha", "withania": "Ashwagandha"
+    "brahmi": "Brahmi", "bacopa monnieri": "Brahmi",
+    "triphala": "Triphala", "amla": "Triphala", "triphala churna": "Triphala",
+    "gallic acid": "Gallic Acid", "ashwagandha": "Ashwagandha", "withania": "Ashwagandha"
 };
 
-/* -----------------------
-   3. INFERENCE ENGINE (The 3 Rules)
-   ----------------------- */
-function inferInteractionLogic(herbKey, drugKey) {
-    const h = herbProfiles[herbKey];
-    const d = drugProfiles[drugKey];
-
-    if (!h || !d) return null;
-
-    // Check for shared enzyme pathway
-    const hEnzymes = h.enzymes || (h.enzyme ? [h.enzyme] : []);
-    const sharedEnzyme = hEnzymes.find(e => e === d.enzyme);
-    
-    if (!sharedEnzyme) return null;
-
-    let result = {
-        herb_display: herbKey,
-        drug_display: drugKey,
-        scientific_name: h.scientific || "N/A",
-        drug_class: d.class || "N/A",
-        enzyme: sharedEnzyme,
-        evidence: "Pharmacokinetic (PK) Rules Engine",
-        severity: "High"
-    };
-
-    // RULE 1: INDUCTION
-    if (h.action === "Inducer" && d.type === "Substrate") {
-        result.clinical_effect = "Decreased Drug Levels (Antagonistic Interaction)";
-        result.recommendation = "Rule 1: Reduced efficacy. The herb activates the enzyme, clearing the drug too quickly.";
-    } 
-    // RULE 2: INHIBITION
-    else if (h.action === "Inhibitor" && d.type === "Substrate") {
-        result.clinical_effect = "Increased Drug Levels (Potentiation Interaction)";
-        result.recommendation = "Rule 2: Increased risk of toxicity. The herb blocks metabolic breakdown.";
-    } 
-    // RULE 3: DOUBLE INHIBITION
-    else if (h.action === "Inhibitor" && d.type === "Inhibitor") {
-        result.clinical_effect = "Potentiated Toxicity (Synergistic Inhibition)";
-        result.severity = "Critical";
-        result.recommendation = "Rule 3: Severe risk of ADRs. Both substances block the metabolic pathway.";
-    }
-
-    return result;
+// --- 3. BIOBERT (Hugging Face) ---
+async function queryBioBERT(text) {
+    try {
+        const response = await fetch(
+            "https://api-inference.huggingface.co/models/dmis-lab/biobert-v1.1",
+            {
+                headers: { 
+                    Authorization: `Bearer ${process.env.HF_TOKEN}`,
+                    "Content-Type": "application/json"
+                },
+                method: "POST",
+                body: JSON.stringify({ inputs: text }),
+            }
+        );
+        return await response.json();
+    } catch (e) { return null; }
 }
 
-/* -----------------------
-   4. DATA LOADER & DASHBOARD
-   ----------------------- */
+// --- 4. PUBMED LIVE ---
+async function fetchPubMedEvidence(h, d) {
+    const query = `${h} AND ${d} AND "interaction"`;
+    const url = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmode=json`;
+    try {
+        const res = await fetch(url);
+        const data = await res.json();
+        const count = data.esearchresult.count;
+        return count > 0 ? `Found ${count} related research papers on PubMed.` : "No direct evidence found on PubMed.";
+    } catch (e) { return "PubMed check unavailable."; }
+}
+
+// --- 5. PK ENGINE ---
+function inferInteractionLogic(hK, dK) {
+    const h = herbProfiles[hK];
+    const d = drugProfiles[dK];
+    if (!h || !d) return null;
+
+    const sharedEnzyme = (h.enzymes || []).find(e => e === d.enzyme) || (h.enzyme === d.enzyme ? h.enzyme : null);
+    if (!sharedEnzyme) return null;
+
+    let res = { 
+        source: "PK Rules Engine", 
+        herb_display: hK, 
+        drug_display: dK, 
+        enzyme: sharedEnzyme, 
+        severity: "High" 
+    };
+
+    if (h.action === "Inducer" && d.type === "Substrate") {
+        res.clinical_effect = "Decreased Drug Levels (Antagonistic)";
+    } else if (h.action === "Inhibitor" && d.type === "Substrate") {
+        res.clinical_effect = "Increased Drug Levels (Potentiation)";
+    } else if (h.action === "Inhibitor" && d.type === "Inhibitor") {
+        res.clinical_effect = "Synergistic Inhibition";
+        res.severity = "Critical";
+    }
+    return res;
+}
+
+// --- 6. CSV LOADER ---
 async function loadCSV() {
     return new Promise((resolve) => {
-        if (!fs.existsSync(MASTER_CSV_PATH)) {
-            console.error("❌ Master CSV not found at:", MASTER_CSV_PATH);
-            return resolve();
-        }
-        const results = [];
+        if (!fs.existsSync(MASTER_CSV_PATH)) return resolve();
         fs.createReadStream(MASTER_CSV_PATH)
             .pipe(csv())
             .on('data', (row) => {
-                const herb = (row['Herb Name'] || '').trim();
-                const drug = (row['Drug Name'] || '').trim();
-                if (herb && drug) {
-                    results.push({
-                        herb: herb.toLowerCase(),
-                        drug: drug.toLowerCase(), // This now stores the full string (including lists)
-                        herb_display: herb,
-                        drug_display: drug,
-                        scientific_name: row['Scientific Name'] || 'N/A',
-                        drug_class: row['Drug Class'] || 'N/A',
-                        clinical_effect: row['Clinical Effect'] || 'N/A',
-                        severity: row['Severity'] || 'Moderate',
-                        evidence: row['Evidence Level'] || 'Clinical Observation',
-                        recommendation: row['Clinical Reccomendation'] || 'Monitor Patient',
-                        reference: row['Reference'] || 'Internal Database'
-                    });
-                }
+                interactionsDB.push({
+                    herb: (row['Herb Name'] || '').trim().toLowerCase(),
+                    drug: (row['Drug Name'] || '').trim().toLowerCase(),
+                    clinical_effect: row['Clinical Effect'],
+                    recommendation: row['Clinical Reccomendation'],
+                    source: "Master CSV Database"
+                });
             })
-            .on('end', () => {
-                interactionsDB = results;
-                console.log(`✅ Master Database Loaded: ${interactionsDB.length} records.`);
-                resolve();
-            });
+            .on('end', resolve);
     });
 }
 
-// DASHBOARD ROUTE
-app.get('/api/list-all', (req, res) => {
-    if (interactionsDB.length > 0) {
-        res.json({ results: interactionsDB });
-    } else {
-        res.json({ results: [], status: "Loading" });
-    }
-});
-
-/* -----------------------
-   5. ANALYZE ROUTE
-   ----------------------- */
+// --- 7. THE MASTER ROUTE ---
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "No text provided" });
+    if (!text) return res.status(400).json({ error: "No text" });
 
     try {
-        console.log("📥 Analyzing input:", text);
-        const cleanInput = text.toLowerCase();
-        let detected = [];
+        const input = text.toLowerCase();
+        let found = [];
 
-        // 1. Detection via Bridge
         Object.keys(SYNONYM_BRIDGE).forEach(key => {
-            if (new RegExp(`\\b${key}\\b`, 'gi').test(cleanInput)) {
-                detected.push(SYNONYM_BRIDGE[key]);
+            if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
+                found.push(SYNONYM_BRIDGE[key]);
             }
         });
 
-        let finalEntities = [...new Set(detected)];
-        let uiResults = [];
+        let finalEntities = [...new Set(found)];
+        let results = [];
 
         if (finalEntities.length >= 2) {
-            // TIER 1: CSV Lookup (FIXED TO HANDLE LISTS IN DRUG NAME)
-            for (let i = 0; i < finalEntities.length; i++) {
-                for (let j = i + 1; j < finalEntities.length; j++) {
-                    const t1 = finalEntities[i].toLowerCase();
-                    const t2 = finalEntities[j].toLowerCase();
+            const h = finalEntities[0];
+            const d = finalEntities[1];
 
-                    const matches = interactionsDB.filter(item => {
-                        // Check Herb match
-                        const herbMatch = (item.herb === t1 || item.herb === t2);
-                        if (!herbMatch) return false;
+            // 1. PubMed
+            const pubmed = await fetchPubMedEvidence(h, d);
+            results.push({ source: "PubMed Live", clinical_effect: pubmed });
 
-                        // Check Drug match (Checks if search drug is inside the CSV cell's list)
-                        const searchDrug = (item.herb === t1) ? t2 : t1;
-                        const drugList = item.drug.split(',').map(d => d.trim().toLowerCase());
-                        
-                        return drugList.includes(searchDrug) || item.drug.includes(searchDrug);
-                    });
-                    uiResults.push(...matches);
-                }
-            }
+            // 2. BioBERT
+            const ai = await queryBioBERT(text);
+            if (ai) results.push({ source: "BioBERT AI", status: "Neural Mapping Active", raw: ai });
 
-            // TIER 2: PK Rules Engine
-            if (uiResults.length === 0) {
-                const herbKey = Object.keys(herbProfiles).find(key => 
-                    finalEntities.some(ent => 
-                        ent.toLowerCase() === key.toLowerCase() || 
-                        (herbProfiles[key].scientific && herbProfiles[key].scientific.toLowerCase() === ent.toLowerCase())
-                    )
-                );
-                
-                const drugKey = Object.keys(drugProfiles).find(key => 
-                    finalEntities.some(ent => ent.toLowerCase() === key.toLowerCase())
-                );
+            // 3. PK Engine
+            const pk = inferInteractionLogic(h, d);
+            if (pk) results.push(pk);
 
-                if (herbKey && drugKey) {
-                    const inference = inferInteractionLogic(herbKey, drugKey);
-                    if (inference) {
-                        uiResults.push(inference);
-                        console.log(`✨ PK Logic Triggered: ${herbKey} + ${drugKey}`);
-                    }
-                }
-            }
+            // 4. CSV
+            const csvMatches = interactionsDB.filter(item => 
+                (item.herb === h.toLowerCase() && item.drug.includes(d.toLowerCase())) ||
+                (item.herb === d.toLowerCase() && item.drug.includes(h.toLowerCase()))
+            );
+            results.push(...csvMatches);
         }
 
-        // TIER 3: Fallback (BioBERT Style)
-        if (uiResults.length === 0 && finalEntities.length >= 2) {
-            uiResults.push({
-                herb_display: finalEntities[0],
-                drug_display: finalEntities[1],
-                clinical_effect: "Potential interaction identified by neural mapping.",
-                severity: "Clinical Alert",
-                evidence: "BioBERT Prediction",
-                recommendation: "Review co-administration; specific pathway data pending."
-            });
-        }
-
-        res.json({ results: uiResults, detected_entities: finalEntities });
-    } catch (error) {
-        console.error("Critical Error:", error);
-        res.status(500).json({ error: "System Error" });
-    }
+        res.json({ results, detected_entities: finalEntities });
+    } catch (e) { res.status(500).json({ error: "Fail" }); }
 });
 
-// INITIALIZATION
 const PORT = process.env.PORT || 10000;
-loadCSV().then(() => {
-    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Engine Live on Port ${PORT}`));
-});
+loadCSV().then(() => app.listen(PORT, '0.0.0.0', () => console.log("🚀 Hybrid Engine Live")));
