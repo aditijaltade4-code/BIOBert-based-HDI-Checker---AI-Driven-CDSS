@@ -30,7 +30,7 @@ SYNONYM_BRIDGE = {
     "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha",
     "gallic acid": "Gallic Acid", "gallic": "Gallic Acid",
     "triphala": "Triphala", "haritaki": "Triphala", "vibhitaki": "Triphala", "amalaki": "Triphala",
-    "guggulu": "Guggulu", "gulgul": "Guggulu"
+    "guggulu": "Guggulu", "gulgul": "Guggulu", "Guggul",
 }
 
 API_URL = "https://api-inference.huggingface.co/models/d4data/biomedical-ner-all"
