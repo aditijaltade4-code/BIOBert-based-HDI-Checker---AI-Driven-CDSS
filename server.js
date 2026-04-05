@@ -1,3 +1,6 @@
+app.get('/health', (req, res) => {
+    res.status(200).send("Server is Healthy and Live");
+});
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
