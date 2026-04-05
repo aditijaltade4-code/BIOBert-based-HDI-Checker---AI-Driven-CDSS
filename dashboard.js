@@ -3,25 +3,21 @@
 ---------------------------------------------------*/
 
 let interactionData = [];
-let charts = {}; // Object to store chart instances
+let charts = {}; 
 
 async function loadDashboard() {
-    console.log("📊 Dashboard: Fetching latest clinical data...");
-    
-    // Ensure we have a clean slate in the UI
-    const container = document.getElementById('results');
+    console.log("📊 Dashboard: Syncing with Master Database...");
     
     try {
-        // Updated fetch to match the fixed server route
-        const response = await fetch("/api/list-all"); 
+        // This endpoint should return the full interactionsDB from your server.js
+        const API_BASE = "https://biobert-based-hdi-checker-ai-driven-cdss.onrender.com"; 
+        const response = await fetch(`${API_BASE}/api/list-all`); 
         
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
         const data = await response.json();
         
-        // Ensure data.results exists and is an array
+        // We use data.results because your server.js wraps the array in a results object
         interactionData = Array.isArray(data.results) ? data.results : [];
 
         if (interactionData.length > 0) {
@@ -32,63 +28,60 @@ async function loadDashboard() {
             // Trigger Chart Rendering
             renderSeverityDistribution();
             renderTopHerbs();
-            renderTopDrugs();
-            console.log(`✅ Dashboard: ${interactionData.length} records rendered.`);
+            renderTopDrugClasses(); // Updated to show classes instead of just names
+            console.log(`✅ Dashboard: ${interactionData.length} master records processed.`);
         } else {
-            console.warn("⚠️ Dashboard: CSV is empty or backend returned no records.");
-            if (container) container.innerHTML = "<p>No interaction records found in database.</p>";
+            console.warn("⚠️ Dashboard: No records found.");
         }
 
     } catch (error) {
         console.error("❌ Dashboard Load Error:", error);
+        const container = document.getElementById('dbSyncStatus');
         if (container) {
-            container.innerHTML = `<p style='color:red; font-weight:bold;'>
-                Connection Error: Could not connect to API server. 
-                <br><small>Details: ${error.message}</small>
-            </p>`;
+            container.innerText = "Sync Error: API Unreachable";
+            container.style.background = "#d63031";
         }
     }
 }
 
 /* ---------------------------------------------------
-    1. Severity Distribution Chart (Pie)
+    1. Severity Distribution Chart (Doughnut)
 ---------------------------------------------------*/
 function renderSeverityDistribution() {
     let severityCount = { High: 0, Moderate: 0, Minor: 0 };
 
     interactionData.forEach(item => {
-        // Robust severity checking (handles 3, "High", "Severe", etc.)
-        const sev = (item.severity || "").toString().toLowerCase();
-        if (sev.includes("severe") || sev.includes("high") || sev.includes("3") || sev.includes("major")) {
+        const sev = (item.severity || "").toLowerCase();
+        // Matching your CSV labels like "Minor-moderate" or "Moderate"
+        if (sev.includes("severe") || sev.includes("high") || sev.includes("major")) {
             severityCount.High++;
-        } else if (sev.includes("moderate") || sev.includes("2")) {
+        } else if (sev.includes("moderate")) {
             severityCount.Moderate++;
         } else {
             severityCount.Minor++;
         }
     });
 
-    createChart("severityChart", "pie", {
+    createChart("severityChart", "doughnut", {
         labels: ["High Risk", "Moderate", "Minor/Mild"],
         datasets: [{
             data: [severityCount.High, severityCount.Moderate, severityCount.Minor],
             backgroundColor: ["#e74c3c", "#f39c12", "#27ae60"],
-            borderWidth: 1
+            hoverOffset: 10
         }]
-    }, "Risk Severity Distribution");
+    }, "Interaction Severity Breakdown");
 }
 
 /* ---------------------------------------------------
-    2. Top Herbs (Vertical Bar)
+    2. Top Herbs (Horizontal Bar)
 ---------------------------------------------------*/
 function renderTopHerbs() {
     let herbCounts = {};
     interactionData.forEach(item => {
-        // Use raw name if available, fallback to normalized
-        const name = item.herb_raw || item.herb;
+        // Matches the 'herb_display' field sent by our updated server.js
+        const name = item.herb_display || item.herb;
         if (name) {
-            const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
-            herbCounts[capitalized] = (herbCounts[capitalized] || 0) + 1;
+            herbCounts[name] = (herbCounts[name] || 0) + 1;
         }
     });
 
@@ -99,55 +92,51 @@ function renderTopHerbs() {
     createChart("herbChart", "bar", {
         labels: sortedHerbs.map(d => d[0]),
         datasets: [{
-            label: "Total Interactions",
+            label: "Total Interaction Profiles",
             data: sortedHerbs.map(d => d[1]),
-            backgroundColor: "#4CAF50",
+            backgroundColor: "#2ecc71",
             borderRadius: 5
         }]
-    }, "Most Frequent Herbs");
+    }, "Top 5 Interacting Herbs", 'y'); // 'y' makes it horizontal
 }
 
 /* ---------------------------------------------------
-    3. Top Drugs (Vertical Bar)
+    3. Top Drug Classes (Horizontal Bar)
 ---------------------------------------------------*/
-function renderTopDrugs() {
-    let drugCounts = {};
+function renderTopDrugClasses() {
+    let classCounts = {};
     interactionData.forEach(item => {
-        const name = item.drug_raw || item.drug;
-        if (name) {
-            const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
-            drugCounts[capitalized] = (drugCounts[capitalized] || 0) + 1;
+        // Matches the 'drug_class' field from your Master CSV
+        const dClass = item.drug_class || "Unclassified";
+        if (dClass) {
+            classCounts[dClass] = (classCounts[dClass] || 0) + 1;
         }
     });
 
-    const sortedDrugs = Object.entries(drugCounts)
+    const sortedClasses = Object.entries(classCounts)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5);
 
     createChart("drugChart", "bar", {
-        labels: sortedDrugs.map(d => d[0]),
+        labels: sortedClasses.map(d => d[0]),
         datasets: [{
-            label: "Total Interactions",
-            data: sortedDrugs.map(d => d[1]),
-            backgroundColor: "#2196F3",
+            label: "Records per Class",
+            data: sortedClasses.map(d => d[1]),
+            backgroundColor: "#3498db",
             borderRadius: 5
         }]
-    }, "Most Frequent Drugs");
+    }, "High-Risk Drug Classes", 'y');
 }
 
 /* ---------------------------------------------------
     Helper: Universal Chart Creator
 ---------------------------------------------------*/
-function createChart(canvasId, type, data, title) {
+function createChart(canvasId, type, data, title, indexAxis = 'x') {
     const canvasElement = document.getElementById(canvasId);
-    if (!canvasElement) {
-        console.error(`Missing Canvas ID: ${canvasId}`);
-        return;
-    }
+    if (!canvasElement) return;
 
     const ctx = canvasElement.getContext('2d');
 
-    // Destroy existing chart instance to prevent tooltips from overlapping
     if (charts[canvasId]) {
         charts[canvasId].destroy();
     }
@@ -156,20 +145,19 @@ function createChart(canvasId, type, data, title) {
         type: type,
         data: data,
         options: {
-            indexAxis: 'x', // Ensures bars are vertical
+            indexAxis: indexAxis, 
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                title: { display: true, text: title, font: { size: 16 } },
-                legend: { position: type === 'pie' ? 'bottom' : 'top' }
+                title: { display: true, text: title, font: { size: 14, weight: 'bold' } },
+                legend: { position: 'bottom' }
             },
             scales: type === 'bar' ? { 
-                y: { beginAtZero: true, ticks: { stepSize: 1 } },
-                x: { ticks: { autoSkip: false } }
+                x: { beginAtZero: true, ticks: { stepSize: 1 } }
             } : {}
         }
     });
 }
 
-// Initial Load
+// Start
 window.addEventListener('DOMContentLoaded', loadDashboard);
