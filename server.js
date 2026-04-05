@@ -65,24 +65,30 @@ async function fetchPubMed(h, d) {
     } catch (e) { return 0; }
 }
 
-// --- 4. DATA LOADER ---
+// --- 4. DATA LOADER (REPAIRED FOR RENDER) ---
 async function loadCSV() {
     return new Promise((resolve) => {
-        console.log(`📂 Checking for CSV at: ${CSV_PATH}`);
+        // Log the current directory to debug the environment
+        console.log(`Current Working Directory: ${process.cwd()}`);
+        console.log(`📂 Attempting to locate CSV at: ${CSV_PATH}`);
+
         if (!fs.existsSync(CSV_PATH)) {
-            console.error("❌ CSV FILE NOT FOUND! Check your /data folder.");
+            console.error("❌ CRITICAL: CSV file NOT found at the specified path.");
+            console.log("Check if your folder is named 'data' (lowercase) and the file is 'HDI_Master_List.csv'");
             return resolve();
         }
+
         interactionsDB = [];
         fs.createReadStream(CSV_PATH)
             .pipe(csv())
             .on('data', (row) => {
+                // This logic handles different column name formats
                 const keys = Object.keys(row);
                 const hK = keys.find(k => k.toLowerCase().includes('herb'));
                 const dK = keys.find(k => k.toLowerCase().includes('drug'));
                 const eK = keys.find(k => k.toLowerCase().includes('effect'));
                 const rK = keys.find(k => k.toLowerCase().includes('recom'));
-                
+
                 if (row[hK] && row[dK]) {
                     interactionsDB.push({
                         herb: row[hK].trim().toLowerCase(),
@@ -95,13 +101,20 @@ async function loadCSV() {
             })
             .on('end', () => {
                 console.log("*****************************************");
-                console.log(`✅ DATABASE INITIALIZED: ${interactionsDB.length} records loaded.`);
+                if (interactionsDB.length > 0) {
+                    console.log(`✅ DATABASE SUCCESS: ${interactionsDB.length} records loaded.`);
+                } else {
+                    console.warn("⚠️ CSV parsed, but 0 records were valid. Check your column headers.");
+                }
                 console.log("*****************************************");
+                resolve();
+            })
+            .on('error', (err) => {
+                console.error("❌ Stream Error:", err);
                 resolve();
             });
     });
 }
-
 // --- 5. ROUTES ---
 
 app.get('/api/list-all', (req, res) => {
