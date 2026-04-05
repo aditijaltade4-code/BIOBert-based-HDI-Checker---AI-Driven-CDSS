@@ -13,21 +13,39 @@ const HF_API_URL = "https://api-inference.huggingface.co/models/d4data/biomedica
 const CSV_PATH = path.join(__dirname, 'data', 'interactions.csv'); 
 let interactionsDB = [];
 
-// --- 2. THE SYNONYM BRIDGE (EXTRACTED FROM YOUR PYTHON) ---
+// --- 2. EXPANDED SYNONYM BRIDGE ---
+// Added common Ayurvedic herbs, modern drugs, and frequent brand names
 const SYNONYM_BRIDGE = {
-    "glimipride": "Glimepiride", "glimepiride": "Glimepiride", "amaryl": "Glimepiride",
-    "glycomet": "Metformin", "metformin": "Metformin",
-    "omez": "Pantoprazole", "pantoprazole": "Pantoprazole", "pan-d": "Pantoprazole",
-    "pantocid": "Pantoprazole", "omeprazole": "Pantoprazole",
-    "aspirin": "Aspirin", "ecosprin": "Aspirin", "disprin": "Aspirin",
+    // Cardiovascular / Blood Pressure
+    "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
+    "telmisartan": "Telmisartan", "telma": "Telmisartan", "telvas": "Telmisartan",
+    "losartan": "Losartan", "losar": "Losartan",
+    "atorvastatin": "Atorvastatin", "atorva": "Atorvastatin", "lipvas": "Atorvastatin",
     "warfarin": "Warfarin", "coumadin": "Warfarin",
-    "furosemide": "Furosemide", "lasix": "Furosemide",
-    "turmeric": "Curcumin", "curcumin": "Curcumin", "haridra": "Curcumin",
-    "aloe vera": "Aloe Vera", "aleovera": "Aloe Vera", "ghritkumari": "Aloe Vera",
-    "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha",
-    "gallic acid": "Gallic Acid", "gallic": "Gallic Acid",
-    "triphala": "Triphala", "haritaki": "Triphala", "vibhitaki": "Triphala", "amalaki": "Triphala",
-    "guggulu": "Guggulu", "gulgul": "Guggulu", "guggul": "Guggulu"
+    "aspirin": "Aspirin", "ecosprin": "Aspirin", "disprin": "Aspirin",
+    "clopidogrel": "Clopidogrel", "clopilet": "Clopidogrel",
+
+    // Diabetes
+    "metformin": "Metformin", "glycomet": "Metformin", "cetapin": "Metformin",
+    "glimepiride": "Glimepiride", "amaryl": "Glimepiride", "glimipride": "Glimepiride",
+    "sitagliptin": "Sitagliptin", "januvia": "Sitagliptin",
+
+    // Gastric / Acid Reflux
+    "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", "pan-d": "Pantoprazole",
+    "omeprazole": "Omeprazole", "omez": "Omeprazole",
+    "ranitidine": "Ranitidine", "zantac": "Ranitidine", "acinorm": "Ranitidine",
+
+    // Common Ayurvedic Herbs (Indian Context)
+    "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha", "withania": "Ashwagandha",
+    "guggulu": "Guggulu", "guggul": "Guggulu", "gulgul": "Guggulu", "commiphora": "Guggulu",
+    "turmeric": "Curcumin", "curcumin": "Curcumin", "haridra": "Curcumin", "haldi": "Curcumin",
+    "brahmi": "Brahmi", "bacopa": "Brahmi",
+    "shatavari": "Shatavari", "aspargus": "Shatavari",
+    "tulsi": "Tulsi", "basil": "Tulsi", "holy basil": "Tulsi",
+    "triphala": "Triphala", "haritaki": "Triphala", "vibhitaki": "Triphala", "amalaki": "Triphala", "amla": "Triphala",
+    "giloy": "Giloy", "guduchi": "Giloy", "tinospora": "Giloy",
+    "neem": "Neem", "azadirachta": "Neem",
+    "aloe vera": "Aloe Vera", "aleovera": "Aloe Vera", "ghritkumari": "Aloe Vera"
 };
 
 /* -----------------------
@@ -67,7 +85,7 @@ async function loadCSV() {
 }
 
 /* -----------------------
-   4. HYBRID AI LOGIC (PORTED FROM PYTHON)
+   4. HYBRID AI LOGIC
    ----------------------- */
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
@@ -76,8 +94,18 @@ app.post('/api/analyze-text', async (req, res) => {
     try {
         console.log(`🤖 Processing: "${text}"`);
         const cleanInput = text.toLowerCase();
-        
-        // --- STEP 1: AI NER DETECTION (Calling HuggingFace Directly) ---
+        let rawDetected = [];
+
+        // --- STEP 1: SAFETY SCAN (Regex Match for Bridge) ---
+        // We do this first to ensure we don't miss known drugs/herbs
+        Object.keys(SYNONYM_BRIDGE).forEach(key => {
+            const regex = new RegExp(`\\b${key}\\b`, 'gi'); 
+            if (regex.test(cleanInput)) {
+                rawDetected.push(key);
+            }
+        });
+
+        // --- STEP 2: AI NER DETECTION (BioBERT) ---
         const hfResponse = await fetch(HF_API_URL, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
@@ -85,9 +113,8 @@ app.post('/api/analyze-text', async (req, res) => {
         });
 
         const apiResults = await hfResponse.json();
-        let rawDetected = [];
 
-        // BioBERT Subword Reassembly Logic (Ported from Python)
+        // BioBERT Subword Reassembly Logic
         if (Array.isArray(apiResults)) {
             let currentWord = "";
             apiResults.forEach(ent => {
@@ -95,19 +122,12 @@ app.post('/api/analyze-text', async (req, res) => {
                 if (word.startsWith("##")) {
                     currentWord += word.replace("##", "");
                 } else {
-                    if (currentWord) rawDetected.push(currentWord);
+                    if (currentWord.length > 2) rawDetected.push(currentWord);
                     currentWord = word;
                 }
             });
-            if (currentWord) rawDetected.push(currentWord);
+            if (currentWord.length > 2) rawDetected.push(currentWord);
         }
-
-        // --- STEP 2: KEYWORD SCANNER (Matches manual inputs/synonyms) ---
-        Object.keys(SYNONYM_BRIDGE).forEach(key => {
-            if (cleanInput.includes(key) && !rawDetected.some(w => w.toLowerCase() === key)) {
-                rawDetected.push(key);
-            }
-        });
 
         // --- STEP 3: NORMALIZATION & DEDUPLICATION ---
         let finalEntities = [];
@@ -123,20 +143,25 @@ app.post('/api/analyze-text', async (req, res) => {
 
         // --- STEP 4: HYBRID SEARCH & DYNAMIC GENERATION ---
         await loadCSV();
-        
-        // First, check for an exact pair match in our CSV
         let uiResults = [];
-        if (finalEntities.length >= 2) {
-            const e1 = finalEntities[0].toLowerCase();
-            const e2 = finalEntities[1].toLowerCase();
 
-            uiResults = interactionsDB.filter(item => 
-                (item.herb.includes(e1) || e1.includes(item.herb)) &&
-                (item.drug.includes(e2) || e2.includes(item.drug))
-            );
+        if (finalEntities.length >= 2) {
+            // Check all combinations for a CSV match
+            for (let i = 0; i < finalEntities.length; i++) {
+                for (let j = i + 1; j < finalEntities.length; j++) {
+                    const e1 = finalEntities[i].toLowerCase();
+                    const e2 = finalEntities[j].toLowerCase();
+
+                    const matches = interactionsDB.filter(item => 
+                        (item.herb.includes(e1) || e1.includes(item.herb) || item.herb.includes(e2) || e2.includes(item.herb)) &&
+                        (item.drug.includes(e1) || e1.includes(item.drug) || item.drug.includes(e2) || e2.includes(item.drug))
+                    );
+                    uiResults.push(...matches);
+                }
+            }
         }
 
-        // If no CSV match, generate the Dynamic Interaction (Ported from Python)
+        // If no CSV match, generate Dynamic Interaction Alert
         if (uiResults.length === 0 && finalEntities.length >= 2) {
             const e1 = finalEntities[0];
             const e2 = finalEntities[1];
