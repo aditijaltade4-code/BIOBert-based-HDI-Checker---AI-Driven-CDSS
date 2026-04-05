@@ -33,6 +33,13 @@
                     <input type="text" id="drugInput" placeholder="Enter Drug (e.g., Amlodipine, Metformin)">
                     <button onclick="manualInteractionCheck()" class="btn-primary">Verify Interaction</button>
                 </div>
+
+                <div id="waterfallStatus" style="display:none; margin-top:15px; font-size:0.8rem; color:#666; text-align:center;">
+                    <span id="step-csv">📁 CSV Check</span> → 
+                    <span id="step-pubmed">🔬 PubMed Search</span> → 
+                    <span id="step-pk">🧬 PK Logic</span>
+                </div>
+
                 <div id="manualCheckResults" class="results-area"></div>
             </section>
 
@@ -47,8 +54,9 @@
                     <textarea id="clinicalNoteInput" rows="4" placeholder="Example: Patient is on Amlodipine 5mg but also started taking Guggulu for cholesterol management..."></textarea>
                     <button id="aiBtn" onclick="runDeepAI()" class="btn-ai">Execute Clinical AI Scan</button>
                 </div>
-                <div id="pubmedStatus" style="display:none; margin-top:10px; font-size:0.85em; color:#007bff;">
-                    🔍 Scanning PubMed Literature...
+                
+                <div id="pubmedStatus" style="display:none; margin-top:10px; font-size:0.85em; color:#007bff; font-weight:bold;">
+                    🔍 Accessing NCBI PubMed & BioBERT Neural Engine...
                 </div>
                 <div id="aiScanResults" class="results-area"></div>
             </section>
@@ -85,6 +93,9 @@
         <footer>
             <div class="footer-content">
                 <p>&copy; 2026 Clinical Informatics Research | Powered by BioBERT NLP & PubMed Engine</p>
+                <div class="system-meta" style="font-size: 0.75rem; color: #95a5a6; margin-bottom: 10px;">
+                    Logic Stack: Master CSV | BioBERT v1.1 | NCBI PubMed E-Utils | Pharmacokinetic Enzyme Mapping
+                </div>
                 <p class="disclaimer">
                     <strong>Institutional Disclaimer:</strong> This system is a Decision Support Tool intended for research and educational purposes. 
                     Final clinical decisions should be based on peer-reviewed literature and professional medical judgment.
