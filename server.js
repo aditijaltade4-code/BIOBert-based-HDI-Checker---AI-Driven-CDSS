@@ -8,9 +8,8 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-// --- 1. CONFIGURATION & DATA LOADING ---
-const MASTER_CSV_PATH = path.join(__dirname, 'data', 'HDI_Master_List.csv'); 
-
+// --- 1. DATA PATHS ---
+const CSV_PATH = path.join(__dirname, 'data', 'HDI_Master_List.csv');
 let interactionsDB = [];
 let herbProfiles = {};
 let drugProfiles = {};
@@ -18,12 +17,9 @@ let drugProfiles = {};
 try {
     herbProfiles = require('./herb_profiles.json');
     drugProfiles = require('./drug_profiles.json');
-    console.log("✅ Profiles loaded.");
-} catch (e) {
-    console.error("⚠️ JSON profiles missing.");
-}
+} catch (e) { console.warn("⚠️ JSON profiles missing."); }
 
-// --- 2. SYNONYM BRIDGE (Keep as is) ---
+// --- 2. FULL SYNONYM BRIDGE ---
 const SYNONYM_BRIDGE = {
     "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
     "telmisartan": "Telmisartan", "telma": "Telmisartan", "telvas": "Telmisartan",
@@ -33,7 +29,8 @@ const SYNONYM_BRIDGE = {
     "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", 
     "omez": "Pantoprazole", "omeprazole": "Omeprazole",
     "acorus calamus": "Acorus calamus", "vacha": "Acorus calamus",
-    "aesculus indica": "Aesculus indica", "allium sativum": "Allium sativum",
+    "aesculus indica": "Aesculus indica", "indian horse chestnut": "Aesculus indica",
+    "allium sativum": "Allium sativum", "garlic": "Allium sativum",
     "andrographis paniculata": "Andrographis paniculata", "kalmegh": "Andrographis paniculata",
     "berberis aristata": "Berberis aristata", "daruharidra": "Berberis aristata",
     "carum carvi": "Carum carvi", "krishna jeeraka": "Carum carvi",
@@ -53,141 +50,139 @@ const SYNONYM_BRIDGE = {
     "gallic acid": "Gallic Acid", "ashwagandha": "Ashwagandha", "withania": "Ashwagandha"
 };
 
-// --- 3. BIOBERT (Hugging Face) ---
+// --- 3. EXTERNAL API LOGIC ---
 async function queryBioBERT(text) {
     try {
-        const response = await fetch(
-            "https://api-inference.huggingface.co/models/dmis-lab/biobert-v1.1",
-            {
-                headers: { 
-                    Authorization: `Bearer ${process.env.HF_TOKEN}`,
-                    "Content-Type": "application/json"
-                },
-                method: "POST",
-                body: JSON.stringify({ inputs: text }),
-            }
-        );
-        return await response.json();
+        const response = await fetch("https://api-inference.huggingface.co/models/dmis-lab/biobert-v1.1", {
+            headers: { Authorization: `Bearer ${process.env.HF_TOKEN}`, "Content-Type": "application/json" },
+            method: "POST",
+            body: JSON.stringify({ inputs: text }),
+        });
+        const data = await response.json();
+        if (data.error && data.error.includes("currently loading")) return { status: "AI Model Initializing" };
+        return data;
     } catch (e) { return null; }
 }
 
-// --- 4. PUBMED LIVE ---
-async function fetchPubMedEvidence(h, d) {
-    const query = `${h} AND ${d} AND "interaction"`;
-    const url = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmode=json`;
+async function fetchPubMed(h, d) {
+    const url = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(h)}+AND+${encodeURIComponent(d)}+AND+interaction&retmode=json`;
     try {
         const res = await fetch(url);
         const data = await res.json();
-        const count = data.esearchresult.count;
-        return count > 0 ? `Found ${count} related research papers on PubMed.` : "No direct evidence found on PubMed.";
-    } catch (e) { return "PubMed check unavailable."; }
+        return parseInt(data.esearchresult.count) || 0;
+    } catch (e) { return 0; }
 }
 
-// --- 5. PK ENGINE ---
-function inferInteractionLogic(hK, dK) {
-    const h = herbProfiles[hK];
-    const d = drugProfiles[dK];
-    if (!h || !d) return null;
-
-    const sharedEnzyme = (h.enzymes || []).find(e => e === d.enzyme) || (h.enzyme === d.enzyme ? h.enzyme : null);
-    if (!sharedEnzyme) return null;
-
-    let res = { 
-        source: "PK Rules Engine", 
-        herb_display: hK, 
-        drug_display: dK, 
-        enzyme: sharedEnzyme, 
-        severity: "High" 
-    };
-
-    if (h.action === "Inducer" && d.type === "Substrate") {
-        res.clinical_effect = "Decreased Drug Levels (Antagonistic)";
-    } else if (h.action === "Inhibitor" && d.type === "Substrate") {
-        res.clinical_effect = "Increased Drug Levels (Potentiation)";
-    } else if (h.action === "Inhibitor" && d.type === "Inhibitor") {
-        res.clinical_effect = "Synergistic Inhibition";
-        res.severity = "Critical";
-    }
-    return res;
-}
-
-// --- 6. CSV LOADER ---
+// --- 4. DATA LOADER ---
 async function loadCSV() {
     return new Promise((resolve) => {
-        if (!fs.existsSync(MASTER_CSV_PATH)) return resolve();
-        fs.createReadStream(MASTER_CSV_PATH)
+        if (!fs.existsSync(CSV_PATH)) {
+            console.error("❌ CSV NOT FOUND");
+            return resolve();
+        }
+        interactionsDB = [];
+        fs.createReadStream(CSV_PATH)
             .pipe(csv())
             .on('data', (row) => {
-                interactionsDB.push({
-                    herb: (row['Herb Name'] || '').trim().toLowerCase(),
-                    drug: (row['Drug Name'] || '').trim().toLowerCase(),
-                    clinical_effect: row['Clinical Effect'],
-                    recommendation: row['Clinical Reccomendation'],
-                    source: "Master CSV Database"
-                });
+                const keys = Object.keys(row);
+                const hK = keys.find(k => k.toLowerCase().includes('herb'));
+                const dK = keys.find(k => k.toLowerCase().includes('drug'));
+                const eK = keys.find(k => k.toLowerCase().includes('effect'));
+                const rK = keys.find(k => k.toLowerCase().includes('recommendation') || k.toLowerCase().includes('reccomendation'));
+
+                if (row[hK] && row[dK]) {
+                    interactionsDB.push({
+                        herb: row[hK].trim().toLowerCase(),
+                        drug: row[dK].trim().toLowerCase(),
+                        clinical_effect: row[eK] || "N/A",
+                        recommendation: row[rK] || "Monitor patient therapy.",
+                        source: "Master CSV"
+                    });
+                }
             })
-            .on('end', resolve);
+            .on('end', () => {
+                console.log(`✅ CSV Loaded: ${interactionsDB.length} records.`);
+                resolve();
+            });
     });
 }
 
-// --- 7. THE MASTER ROUTE ---
+// --- 5. ROUTES ---
+
+app.get('/api/dashboard-stats', (req, res) => {
+    res.json({
+        total: interactionsDB.length,
+        herbs: Object.keys(herbProfiles).length,
+        drugs: Object.keys(drugProfiles).length
+    });
+});
+
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "No text" });
+    if (!text) return res.status(400).json({ error: "No input provided." });
 
-    try {
-        const input = text.toLowerCase();
-        let found = [];
+    const input = text.toLowerCase();
+    let finalResults = [];
 
-        Object.keys(SYNONYM_BRIDGE).forEach(key => {
-            if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
-                found.push(SYNONYM_BRIDGE[key]);
-            }
+    // --- LOGIC 1: BIOBERT SCAN (Always run first) ---
+    const aiResponse = await queryBioBERT(text);
+    if (aiResponse) {
+        finalResults.push({ 
+            source: "BioBERT AI Analysis", 
+            clinical_effect: "AI detected interaction markers in clinical text.",
+            data: aiResponse 
         });
-
-        let finalEntities = [...new Set(found)];
-        let results = [];
-
-        if (finalEntities.length >= 2) {
-            const h = finalEntities[0];
-            const d = finalEntities[1];
-
-            // 1. PubMed
-            const pubmed = await fetchPubMedEvidence(h, d);
-            results.push({ source: "PubMed Live", clinical_effect: pubmed });
-
-            // 2. BioBERT
-            const ai = await queryBioBERT(text);
-            if (ai) results.push({ source: "BioBERT AI", status: "Neural Mapping Active", raw: ai });
-
-            // 3. PK Engine
-            const pk = inferInteractionLogic(h, d);
-            if (pk) results.push(pk);
-
-            // 4. CSV
-            const csvMatches = interactionsDB.filter(item => 
-                (item.herb === h.toLowerCase() && item.drug.includes(d.toLowerCase())) ||
-                (item.herb === d.toLowerCase() && item.drug.includes(h.toLowerCase()))
-            );
-            results.push(...csvMatches);
-        }
-
-        res.json({ results, detected_entities: finalEntities });
-    } catch (e) { res.status(500).json({ error: "Fail" }); }
-});
-// --- 8. DASHBOARD STATS ROUTE ---
-app.get('/api/dashboard-stats', (req, res) => {
-    try {
-        const stats = {
-            totalInteractions: interactionsDB.length,
-            herbsCovered: Object.keys(herbProfiles).length,
-            drugsCovered: Object.keys(drugProfiles).length,
-            evidenceLevel: "High (Hybrid AI + PubMed)"
-        };
-        res.json(stats);
-    } catch (error) {
-        res.status(500).json({ error: "Could not load stats" });
     }
+
+    // --- LOGIC 2: SYNONYM BRIDGE (The "Enhancer") ---
+    let detected = [];
+    Object.keys(SYNONYM_BRIDGE).forEach(key => {
+        if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
+            detected.push(SYNONYM_BRIDGE[key]);
+        }
+    });
+
+    let entities = [...new Set(detected)];
+
+    // --- LOGIC 3: PUBMED (Literature Search) ---
+    // If bridge found entities, use them. Otherwise, attempt to extract nouns from text.
+    let searchH, searchD;
+    if (entities.length >= 2) {
+        searchH = entities[0];
+        searchD = entities[1];
+    } else {
+        const words = text.split(/\s+/).filter(w => w.length > 4);
+        searchH = words[0] || "Unknown";
+        searchD = words[1] || "Unknown";
+    }
+
+    if (searchH !== "Unknown" && searchD !== "Unknown") {
+        const pCount = await fetchPubMed(searchH, searchD);
+        finalResults.push({ 
+            source: "PubMed Literature", 
+            clinical_effect: pCount > 0 
+                ? `Found ${pCount} clinical papers for ${searchH} & ${searchD}.` 
+                : `No direct clinical evidence for ${searchH} & ${searchD} found in PubMed.` 
+        });
+    }
+
+    // --- LOGIC 4: MASTER CSV MATCH ---
+    if (entities.length >= 2) {
+        const matches = interactionsDB.filter(i => 
+            (i.herb === entities[0].toLowerCase() && i.drug.includes(entities[1].toLowerCase())) ||
+            (i.herb === entities[1].toLowerCase() && i.drug.includes(entities[0].toLowerCase()))
+        );
+        finalResults.push(...matches);
+    }
+
+    res.json({ 
+        results: finalResults, 
+        entities: entities.length > 0 ? entities : [searchH, searchD] 
+    });
 });
+
+// --- 6. START ---
 const PORT = process.env.PORT || 10000;
-loadCSV().then(() => app.listen(PORT, '0.0.0.0', () => console.log("🚀 Hybrid Engine Live")));
+loadCSV().then(() => {
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 CDSS Online` ));
+});
