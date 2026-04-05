@@ -5,14 +5,11 @@ const csv = require('csv-parser');
 
 const app = express();
 app.use(express.json());
+// Serves your frontend (index.html, app.js, etc.)
 app.use(express.static(path.join(__dirname)));
 
 // --- 1. CONFIGURATION ---
-// On Render, the Python service has its own URL. 
-// --- 1. CONFIGURATION ---
-// On Render, both services share the environment. 
-// We force it to 0.0.0.0:8000 which is the internal 'open' address for the Python engine.
-// Change this line near the top of server.js
+// On Render, we talk to Python internally on port 8080
 const AI_BACKEND_URL = process.env.AI_URL || 'http://127.0.0.1:8080';
 const CSV_PATH = path.join(__dirname, 'data', 'interactions.csv'); 
 let interactionsDB = [];
@@ -70,11 +67,13 @@ async function loadCSV() {
    3. ROUTES
    ----------------------- */
 
+// API to list everything for debugging
 app.get('/api/list-all', async (req, res) => {
     await loadCSV(); 
     res.json({ results: interactionsDB });
 });
 
+// Manual search from specific dropdowns/inputs
 app.post('/api/manual-check', async (req, res) => {
     const { herb, drug } = req.body;
     if (!herb || !drug) return res.status(400).json({ results: [] });
@@ -91,6 +90,7 @@ app.post('/api/manual-check', async (req, res) => {
     res.json({ results: matches });
 });
 
+// Main AI analysis route
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: "No text provided" });
@@ -98,7 +98,6 @@ app.post('/api/analyze-text', async (req, res) => {
     try {
         console.log(`🤖 Forwarding to BioBERT at ${AI_BACKEND_URL}/analyze: "${text}"`);
         
-        // Removed hardcoded localhost:8000
         const response = await fetch(`${AI_BACKEND_URL}/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -113,16 +112,25 @@ app.post('/api/analyze-text', async (req, res) => {
         await loadCSV();
         
         let uiResults = [];
-        if (data.results && data.results.length > 0) {
+
+        // 1. Check if AI already generated a success object
+        if (data.status === "success" && data.results) {
             uiResults = data.results;
         } 
+        // 2. Check detected entities (strings) against our local CSV
         else if (data.detected_entities && data.detected_entities.length > 0) {
-            const firstEntity = data.detected_entities[0].entity.toLowerCase();
+            // FIX: Map the entities to lowercase strings safely
+            const foundEntities = data.detected_entities.map(e => e.toLowerCase());
+            
+            console.log(`🔎 Searching CSV for entities: ${foundEntities}`);
+
             uiResults = interactionsDB.filter(item => 
-                item.herb.includes(firstEntity) || 
-                item.drug.includes(firstEntity) ||
-                firstEntity.includes(item.herb) || 
-                firstEntity.includes(item.drug)
+                foundEntities.some(entity => 
+                    item.herb.includes(entity) || 
+                    item.drug.includes(entity) ||
+                    entity.includes(item.herb) || 
+                    entity.includes(item.drug)
+                )
             );
         }
 
@@ -131,20 +139,19 @@ app.post('/api/analyze-text', async (req, res) => {
     } catch (error) {
         console.error("❌ AI Bridge Failure:", error.message);
         res.status(500).json({ 
-            error: "BioBERT Engine unreachable.", 
+            error: "BioBERT Engine unreachable or crashed.", 
             results: [] 
         });
     }
 });
 
 /* -----------------------
-   4. START SERVER (Port Fix)
+   4. START SERVER
    ----------------------- */
-// Render will inject a PORT environment variable. We MUST use it.
-const PORT = process.env.PORT || 3000;
+// Render uses Port 10000 by default
+const PORT = process.env.PORT || 10000;
 
 loadCSV().then(() => {
-    // Listening on 0.0.0.0 is critical for Render to detect the open port
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`\n🚀 Clinical CDSS Online`);
         console.log(`📡 Using AI Backend: ${AI_BACKEND_URL}`);
