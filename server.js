@@ -13,8 +13,6 @@ const HF_API_URL = "https://api-inference.huggingface.co/models/d4data/biomedica
 const MASTER_CSV_PATH = path.join(__dirname, 'data', 'HDI_Master_List.csv'); 
 
 let interactionsDB = [];
-
-// NEW: Load your Pharmacological Profiles
 let herbProfiles = {};
 let drugProfiles = {};
 
@@ -23,12 +21,13 @@ try {
     drugProfiles = require('./drug_profiles.json');
     console.log("✅ Herb and Drug Profiles loaded successfully.");
 } catch (e) {
-    console.error("⚠️ Profiles not found. Inference logic will be limited.");
+    console.error("⚠️ Profiles not found. Check file paths.");
 }
 
-// --- 2. EXPANDED SYNONYM BRIDGE (Fixes Guggulsterone & Normalization) ---
+// --- 2. EXPANDED SYNONYM BRIDGE ---
+// Added common Ayurvedic herbs, modern drugs, and frequent brand names
 const SYNONYM_BRIDGE = {
-    // Cardiovascular
+    // Cardiovascular / Blood Pressure
     "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
     "telmisartan": "Telmisartan", "telma": "Telmisartan", "telvas": "Telmisartan",
     "losartan": "Losartan", "losar": "Losartan",
@@ -42,19 +41,18 @@ const SYNONYM_BRIDGE = {
     "glimepiride": "Glimepiride", "amaryl": "Glimepiride", "glimipride": "Glimepiride",
     "sitagliptin": "Sitagliptin", "januvia": "Sitagliptin",
 
-    // Gastric
+    // Gastric / Acid Reflux
     "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", "pan-d": "Pantoprazole",
     "omeprazole": "Omeprazole", "omez": "Omeprazole",
     "ranitidine": "Ranitidine", "zantac": "Ranitidine", "acinorm": "Ranitidine",
 
-    // FIXED: Guggulu & Constituents
-    "guggulsterone": "Guggulu", "guggulsterones": "Guggulu", "guggul": "Guggulu", 
-    "gulgul": "Guggulu", "commiphora": "Guggulu", "guggulu": "Guggulu",
-
-    // Other Herbs
+    // Common Ayurvedic Herbs (Indian Context)
     "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha", "withania": "Ashwagandha",
+    "guggulu": "Guggulu", "guggul": "Guggulu", "gulgul": "Guggulu", "commiphora": "Guggulu",
     "turmeric": "Curcumin", "curcumin": "Curcumin", "haridra": "Curcumin", "haldi": "Curcumin",
     "brahmi": "Brahmi", "bacopa": "Brahmi",
+    "shatavari": "Shatavari", "aspargus": "Shatavari",
+    "tulsi": "Tulsi", "basil": "Tulsi", "holy basil": "Tulsi",
     "triphala": "Triphala", "haritaki": "Triphala", "vibhitaki": "Triphala", "amalaki": "Triphala", "amla": "Triphala",
     "giloy": "Giloy", "guduchi": "Giloy", "tinospora": "Giloy",
     "neem": "Neem", "azadirachta": "Neem",
@@ -62,42 +60,39 @@ const SYNONYM_BRIDGE = {
 };
 
 /* -----------------------
-   3. INFERENCE ENGINE (Rule-Based Logic)
+   3. INFERENCE ENGINE (The 3 Rules)
    ----------------------- */
-function inferInteractionLogic(herbName, drugName) {
-    const h = herbProfiles[herbName];
-    const d = drugProfiles[drugName];
+function inferInteractionLogic(herbKey, drugKey) {
+    const h = herbProfiles[herbKey];
+    const d = drugProfiles[drugKey];
 
     if (!h || !d) return null;
 
-    // Check for shared enzyme pathway
-    const sharedEnzyme = h.enzymes ? h.enzymes.find(e => e === d.enzyme) : (h.enzyme === d.enzyme ? h.enzyme : null);
+    const hEnzymes = h.enzymes || (h.enzyme ? [h.enzyme] : []);
+    const sharedEnzyme = hEnzymes.find(e => e === d.enzyme);
     
     if (!sharedEnzyme) return null;
 
     let result = {
-        herb_display: herbName,
-        drug_display: drugName,
+        herb_display: herbKey,
+        drug_display: drugKey,
         enzyme: sharedEnzyme,
         evidence: "Pharmacokinetic (PK) Rules Engine",
         severity: "High"
     };
 
-    // RULE 1: INDUCTION (Herb Activates + Drug is Substrate)
     if (h.action === "Inducer" && d.type === "Substrate") {
         result.clinical_effect = "Decreased Drug Levels (Antagonistic Interaction)";
-        result.recommendation = "Clinical Outcome: Reduced efficacy, therapeutic failure. The herb activates the enzyme, clearing the drug too quickly.";
-    }
-    // RULE 2: INHIBITION (Herb Inhibits + Drug is Substrate)
+        result.recommendation = "Rule 1: Reduced efficacy. The herb activates the enzyme, clearing the drug too quickly.";
+    } 
     else if (h.action === "Inhibitor" && d.type === "Substrate") {
         result.clinical_effect = "Increased Drug Levels (Potentiation Interaction)";
-        result.recommendation = "Clinical Outcome: Increased risk of toxicity, exaggerated side effects. The herb blocks metabolic breakdown.";
-    }
-    // RULE 3: DOUBLE INHIBITION (Both are Inhibitors)
+        result.recommendation = "Rule 2: Increased risk of toxicity. The herb blocks metabolic breakdown.";
+    } 
     else if (h.action === "Inhibitor" && d.type === "Inhibitor") {
         result.clinical_effect = "Potentiated Toxicity (Synergistic Inhibition)";
         result.severity = "Critical";
-        result.recommendation = "Clinical Outcome: Severe risk of adverse drug reactions (ADRs). Both substances block the metabolic pathway.";
+        result.recommendation = "Rule 3: Severe risk of ADRs. Both substances block the metabolic pathway.";
     }
 
     return result;
@@ -108,43 +103,28 @@ function inferInteractionLogic(herbName, drugName) {
    ----------------------- */
 async function loadCSV() {
     return new Promise((resolve) => {
-        if (!fs.existsSync(MASTER_CSV_PATH)) {
-            console.error(`❌ Master File not found at ${MASTER_CSV_PATH}`);
-            return resolve(); 
-        }
+        if (!fs.existsSync(MASTER_CSV_PATH)) return resolve();
         const results = [];
         fs.createReadStream(MASTER_CSV_PATH)
             .pipe(csv())
             .on('data', (row) => {
-                const getVal = (obj, target) => {
-                    const key = Object.keys(obj).find(k => k.trim().toLowerCase() === target.toLowerCase());
-                    return key ? obj[key] : '';
-                };
-                const herb = getVal(row, 'Herb Name').trim();
-                const drug = getVal(row, 'Drug Name').trim();
+                const herb = (row['Herb Name'] || '').trim();
+                const drug = (row['Drug Name'] || '').trim();
                 if (herb && drug) {
                     results.push({
                         herb: herb.toLowerCase(),
                         drug: drug.toLowerCase(),
                         herb_display: herb,
                         drug_display: drug,
-                        scientific_name: getVal(row, 'Scientific Name'),
-                        active_ingredients: getVal(row, 'Active Ingredients'),
-                        drug_class: getVal(row, 'Drug Class'),
-                        enzyme: getVal(row, 'Enzyme Target'),
-                        mechanism_type: getVal(row, 'Mechanism Type'),
-                        interaction_type: getVal(row, 'Interactiom Type'),
-                        clinical_effect: getVal(row, 'Clinical Effect'),
-                        severity: getVal(row, 'Severity'),
-                        evidence: getVal(row, 'Evidence Level'),
-                        recommendation: getVal(row, 'Clinical Reccomendation'),
-                        reference: getVal(row, 'Reference')
+                        clinical_effect: row['Clinical Effect'],
+                        severity: row['Severity'],
+                        evidence: row['Evidence Level'],
+                        recommendation: row['Clinical Reccomendation']
                     });
                 }
             })
             .on('end', () => {
                 interactionsDB = results;
-                console.log(`✅ Master Database Loaded: ${interactionsDB.length} interactions.`);
                 resolve();
             });
     });
@@ -152,80 +132,70 @@ async function loadCSV() {
 
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "No text provided" });
+    if (!text) return res.status(400).json({ error: "No text" });
 
     try {
-        console.log("📥 Analyzing input:", text);
         const cleanInput = text.toLowerCase();
-        let rawDetected = [];
+        let detected = [];
 
-        // 1. Detection (Synonym Bridge)
+        // 1. Detection via Bridge
         Object.keys(SYNONYM_BRIDGE).forEach(key => {
-            const regex = new RegExp(`\\b${key}\\b`, 'gi');
-            if (regex.test(cleanInput)) rawDetected.push(SYNONYM_BRIDGE[key]);
+            if (new RegExp(`\\b${key}\\b`, 'gi').test(cleanInput)) detected.push(SYNONYM_BRIDGE[key]);
         });
 
-        // 2. Normalization (Handle Multi-word names)
-        let finalEntities = [...new Set(rawDetected)];
-        
-        // Check for botanical names in herbProfiles that might not be in the bridge
-        Object.keys(herbProfiles).forEach(hName => {
-            if (cleanInput.includes(hName.toLowerCase()) && !finalEntities.includes(hName)) {
-                finalEntities.push(hName);
-            }
-        });
-
+        let finalEntities = [...new Set(detected)];
         let uiResults = [];
 
         if (finalEntities.length >= 2) {
-            // TIER 1: Master CSV Lookup
+            // TIER 1: CSV Lookup
             for (let i = 0; i < finalEntities.length; i++) {
                 for (let j = i + 1; j < finalEntities.length; j++) {
-                    const term1 = finalEntities[i].toLowerCase();
-                    const term2 = finalEntities[j].toLowerCase();
-
+                    const t1 = finalEntities[i].toLowerCase();
+                    const t2 = finalEntities[j].toLowerCase();
                     const matches = interactionsDB.filter(item => 
-                        (item.herb === term1 && item.drug === term2) ||
-                        (item.herb === term2 && item.drug === term1)
+                        (item.herb === t1 && item.drug === t2) || (item.herb === t2 && item.drug === t1)
                     );
                     uiResults.push(...matches);
                 }
             }
 
-            // TIER 2: PK Rules Engine (If no CSV match)
+            // TIER 2: PK Rules (FIXED SEARCH LOGIC)
             if (uiResults.length === 0) {
-                const hName = finalEntities.find(name => herbProfiles[name]);
-                const dName = finalEntities.find(name => drugProfiles[name]);
+                // Find the profile key by checking key name OR scientific name
+                const herbKey = Object.keys(herbProfiles).find(key => 
+                    finalEntities.some(ent => 
+                        ent.toLowerCase() === key.toLowerCase() || 
+                        (herbProfiles[key].scientific && herbProfiles[key].scientific.toLowerCase() === ent.toLowerCase())
+                    )
+                );
+                
+                const drugKey = Object.keys(drugProfiles).find(key => 
+                    finalEntities.some(ent => ent.toLowerCase() === key.toLowerCase())
+                );
 
-                if (hName && dName) {
-                    const inference = inferInteractionLogic(hName, dName);
+                if (herbKey && drugKey) {
+                    const inference = inferInteractionLogic(herbKey, drugKey);
                     if (inference) uiResults.push(inference);
                 }
             }
         }
 
-        // TIER 3: Fallback (BioBERT Style Prediction)
+        // TIER 3: Fallback
         if (uiResults.length === 0 && finalEntities.length >= 2) {
             uiResults.push({
                 herb_display: finalEntities[0],
                 drug_display: finalEntities[1],
                 clinical_effect: "Potential interaction identified by neural mapping.",
                 severity: "Clinical Alert",
-                recommendation: "Review co-administration; specific pathway data pending.",
                 evidence: "BioBERT Prediction"
             });
         }
 
         res.json({ results: uiResults, detected_entities: finalEntities });
-
     } catch (error) {
-        console.error("Critical System Error:", error);
         res.status(500).json({ error: "System Error" });
     }
 });
 
-// Initialization
 const PORT = process.env.PORT || 10000;
-loadCSV().then(() => {
-    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Master CDSS Engine Live on Port ${PORT}`));
-});
+loadCSV().then(() => app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Engine Live`)));
