@@ -12,7 +12,8 @@ app.use(express.static(path.join(__dirname)));
 // --- 1. CONFIGURATION ---
 // On Render, both services share the environment. 
 // We force it to 0.0.0.0:8000 which is the internal 'open' address for the Python engine.
-const AI_BACKEND_URL = process.env.AI_URL || 'http://0.0.0.0:8000';
+// Change this line near the top of server.js
+const AI_BACKEND_URL = process.env.AI_URL || 'http://127.0.0.1:8080';
 const CSV_PATH = path.join(__dirname, 'data', 'interactions.csv'); 
 let interactionsDB = [];
 
