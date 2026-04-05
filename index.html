@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Herb-Drug Interaction CDSS</title>
+    <title>AI Herb-Drug Interaction CDSS | Master Database</title>
     <link rel="stylesheet" href="style.css">
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
@@ -16,38 +16,44 @@
         <header>
             <div class="logo-area">
                 <h1>AI Herb-Drug Interaction CDSS</h1>
-                <span class="badge-live">LIVE ENGINE</span>
+                <span class="badge-live">MASTER ENGINE v2.0</span>
             </div>
             <p>Clinical Decision Support System for Integrative Medicine & Patient Safety</p>
         </header>
 
         <main>
             <section class="card animate__animated animate__fadeIn">
-                <h2>Manual Interaction Checker</h2>
-                <p class="section-desc">Search our clinical database for known contraindications.</p>
+                <div class="section-header">
+                    <h2>Manual Interaction Checker</h2>
+                    <span class="info-tag">Search by Common or Brand Name</span>
+                </div>
+                <p class="section-desc">Search the Master Research Database for known pharmacological contraindications.</p>
                 <div class="manual-form">
-                    <input type="text" id="herbInput" placeholder="Enter Herb (e.g., Haritaki)">
-                    <input type="text" id="drugInput" placeholder="Enter Drug (e.g., Glycomet)">
-                    <button onclick="manualInteractionCheck()" class="btn-primary">Check Interaction</button>
+                    <input type="text" id="herbInput" placeholder="Enter Herb (e.g., Haridra, Ashwagandha)">
+                    <input type="text" id="drugInput" placeholder="Enter Drug (e.g., Amlodipine, Metformin)">
+                    <button onclick="manualInteractionCheck()" class="btn-primary">Verify Interaction</button>
                 </div>
                 <div id="manualCheckResults" class="results-area"></div>
             </section>
 
             <section class="card animate__animated animate__fadeIn" style="animation-delay: 0.1s;">
-                <h2>AI Prescription Analysis (BioBERT)</h2>
-                <p class="section-desc">Extract entities from clinical notes to detect hidden risks.</p>
+                <div class="section-header">
+                    <h2>Clinical Note Analysis (BioBERT)</h2>
+                    <span class="ai-tag">Neural Processing</span>
+                </div>
+                <p class="section-desc">Extract pharmacological entities from unstructured clinical notes to detect hidden risks.</p>
                 <div class="ai-input-wrapper">
-                    <label for="clinicalNoteInput">Paste Clinical Note / EHR Text</label>
-                    <textarea id="clinicalNoteInput" rows="4" placeholder="Example: Patient reports taking Curcumin supplements along with their prescribed Warfarin regimen..."></textarea>
-                    <button onclick="runDeepAI()" class="btn-ai">Run AI Deep Scan</button>
+                    <label for="clinicalNoteInput">Paste EHR Text or Prescription Notes</label>
+                    <textarea id="clinicalNoteInput" rows="4" placeholder="Example: Patient is on Amlodipine 5mg but also started taking Guggulu for cholesterol management..."></textarea>
+                    <button onclick="runDeepAI()" class="btn-ai">Execute Clinical AI Scan</button>
                 </div>
                 <div id="aiScanResults" class="results-area"></div>
             </section>
 
             <section class="card dashboard animate__animated animate__fadeIn" style="animation-delay: 0.2s;">
                 <div class="dashboard-header">
-                    <h2>Risk Severity Dashboard</h2>
-                    <span id="dbSyncStatus" class="sync-tag">Synced with interactions.csv</span>
+                    <h2>Risk & Evidence Dashboard</h2>
+                    <span id="dbSyncStatus" class="sync-tag">Synced with HDI_Master_List.csv</span>
                 </div>
                 
                 <div class="dashboard-grid">
@@ -58,13 +64,13 @@
                         </div>
                     </div>
                     <div class="dashboard-card">
-                        <h3>Top Interacting Herbs</h3>
+                        <h3>High-Risk Herbs</h3>
                         <div class="chart-wrapper">
                              <canvas id="herbChart"></canvas>
                         </div>
                     </div>
                     <div class="dashboard-card">
-                        <h3>Top Interacting Drugs</h3>
+                        <h3>High-Risk Drug Classes</h3>
                         <div class="chart-wrapper">
                              <canvas id="drugChart"></canvas>
                         </div>
@@ -75,8 +81,11 @@
         
         <footer>
             <div class="footer-content">
-                <p>&copy; 2026 Clinical Research Tool | Powered by BioBERT NLP</p>
-                <p class="disclaimer">Note: This is a decision support tool, not a substitute for professional medical advice.</p>
+                <p>&copy; 2026 Clinical Informatics Research | Powered by BioBERT NLP & Master HDI Dataset</p>
+                <p class="disclaimer">
+                    <strong>Institutional Disclaimer:</strong> This system is a Decision Support Tool intended for research and educational purposes. 
+                    Final clinical decisions should be based on peer-reviewed literature and professional medical judgment.
+                </p>
             </div>
         </footer>
     </div>
