@@ -18,19 +18,17 @@ window.manualInteractionCheck = async function() {
         return;
     }
 
-    container.innerHTML = `<div class="text-center p-3"><div class="spinner-border spinner-border-sm text-primary"></div> Searching Research Database...</div>`; 
+    container.innerHTML = `<div class="text-center p-3"><div class="spinner-border spinner-border-sm text-primary"></div> Searching Master Database...</div>`; 
 
     try {
+        // Ensure this URL matches your Render deployment
         const API_BASE = "https://biobert-based-hdi-checker-ai-driven-cdss.onrender.com"; 
 
-        const response = await fetch(`${API_BASE}/api/manual-check`, { 
+        const response = await fetch(`${API_BASE}/api/analyze-text`, { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // Matches Python ManualRequest(herb=str, drug=str)
-            body: JSON.stringify({ 
-                herb: herbSearch, 
-                drug: drugSearch 
-            })
+            // Note: Using analyze-text logic for manual checks ensures the Normalization/Synonym bridge is applied
+            body: JSON.stringify({ text: `${herbSearch} and ${drugSearch}` })
         });
 
         if (!response.ok) throw new Error("Server response error");
@@ -43,12 +41,12 @@ window.manualInteractionCheck = async function() {
         } else {
             container.innerHTML = `
                 <div style="padding: 15px; background: #eafaf1; color: #155724; border: 1px solid #c3e6cb; border-radius: 6px;">
-                    ✓ No clinical interactions found for <b>${herbSearch}</b> and <b>${drugSearch}</b>.
+                    ✓ No clinical interactions found in Master List for <b>${herbSearch}</b> + <b>${drugSearch}</b>.
                 </div>`;
         }
     } catch (error) {
         console.error("❌ API Error:", error);
-        container.innerHTML = `<div class="alert alert-danger">❌ Connection Error: Ensure the Python backend is live.</div>`;
+        container.innerHTML = `<div class="alert alert-danger">❌ Connection Error: Ensure the Node.js backend is live on Render.</div>`;
     }
 };
 
@@ -56,34 +54,23 @@ window.manualInteractionCheck = async function() {
     Deep AI Scan (BioBERT Integration)
 ----------------------------------------------*/
 window.runDeepAI = async function() {
-    console.log("🤖 AI Scan Triggered");
-    
     const textInput = document.getElementById('clinicalNoteInput');
     const resultDiv = document.getElementById('aiScanResults');
     
     if (!textInput || !textInput.value.trim()) {
-        alert("Please paste clinical text or prescription notes first.");
+        alert("Please paste clinical text first.");
         return;
     }
 
-    const noteText = textInput.value;
-    resultDiv.innerHTML = `
-        <div class="p-4 text-center">
-            <div class="spinner-border text-primary" role="status"></div>
-            <p class="mt-2">⌛ BioBERT is analyzing clinical context...</p>
-        </div>`;
+    resultDiv.innerHTML = `<div class="p-4 text-center"><div class="spinner-border text-primary"></div><p>⌛ Analyzing Clinical Context...</p></div>`;
 
     try {
         const API_BASE = "https://biobert-based-hdi-checker-ai-driven-cdss.onrender.com"; 
-
         const response = await fetch(`${API_BASE}/api/analyze-text`, { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // Matches Python AnalyzeRequest(text=str)
-            body: JSON.stringify({ text: noteText })
+            body: JSON.stringify({ text: textInput.value })
         });
-
-        if (!response.ok) throw new Error(`Server Error: ${response.status}`);
 
         const data = await response.json();
         resultDiv.innerHTML = ""; 
@@ -91,53 +78,60 @@ window.runDeepAI = async function() {
         if (data.results && data.results.length > 0) {
             renderResults(data.results, resultDiv);
         } else {
-            const msg = data.message || "No recognizable herb-drug pairs found.";
-            resultDiv.innerHTML = `<div class='alert alert-info'>${msg}</div>`;
+            resultDiv.innerHTML = `<div class='alert alert-info'>${data.message || "No clinical pairs identified."}</div>`;
         }
-
     } catch (error) {
-        console.warn("⚠️ AI Backend unreachable.");
-        resultDiv.innerHTML = `<div class='alert alert-danger'>❌ System Offline. Check Render Logs.</div>`;
+        resultDiv.innerHTML = `<div class='alert alert-danger'>❌ System Offline.</div>`;
     }
 };
 
 /* ---------------------------------------------
-    Helper: Universal UI Renderer
+    Helper: Professional Clinical UI Renderer
 ----------------------------------------------*/
 function renderResults(matches, container) {
     container.innerHTML = ""; 
 
     matches.forEach(item => {
-        const displayHerb = (item.herb || "Unknown Herb").toUpperCase();
-        const displayDrug = (item.drug || "Unknown Drug").toUpperCase();
-        const displayNote = item.interaction_text || "Interaction detected.";
-        const displayMech = item.mechanism || "Metabolic pathway interference.";
+        // Map fields from your new HDI Master List CSV structure
+        const herb = item.herb_display || "Unknown Herb";
+        const drug = item.drug_display || "Unknown Drug";
         const severity = (item.severity || "Moderate").toUpperCase();
-        const recommendation = item.recommendation || "Consult prescribing physician.";
-
+        
         const card = document.createElement('div');
         card.className = "interaction-card animate__animated animate__fadeInUp";
         card.style = `
             border-left: 6px solid ${getSevColor(severity)}; 
-            padding: 20px; 
-            background: #fff; 
-            margin-bottom: 15px; 
-            border-radius: 8px; 
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            text-align: left;
+            padding: 20px; background: #fff; margin-bottom: 20px; 
+            border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-align: left; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         `;
         
         card.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                <h5 style="margin: 0; color: #2c3e50; font-weight: 800; font-size: 1.1rem;">${displayHerb} <span style="color:#7f8c8d; font-weight: 400;">+</span> ${displayDrug}</h5>
-                <span style="background: ${getSevColor(severity)}; color: white; padding: 4px 10px; border-radius: 4px; font-size: 0.65rem; font-weight: 900;">${severity}</span>
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px;">
+                <h4 style="margin: 0; color: #2c3e50;">${herb} <span style="color:#bdc3c7;">↔</span> ${drug}</h4>
+                <span style="background: ${getSevColor(severity)}; color: white; padding: 5px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: bold;">${severity}</span>
             </div>
-            <div style="font-size: 0.88rem; line-height: 1.5; color: #444;">
-                <p style="margin-bottom: 4px;"><strong>Effect:</strong> ${displayNote}</p>
-                <p style="margin-bottom: 8px; font-style: italic; color: #666;"><strong>Mechanism:</strong> ${displayMech}</p>
-                <div style="background: #fff5f5; padding: 10px; border-radius: 4px; border-left: 3px solid #ff7675;">
-                    <p style="margin-bottom: 0; color: #c0392b;"><strong>Recommendation:</strong> ${recommendation}</p>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85rem; margin-bottom: 15px;">
+                <div><strong>Scientific:</strong> ${item.scientific_name || 'N/A'}</div>
+                <div><strong>Drug Class:</strong> ${item.drug_class || 'N/A'}</div>
+                <div><strong>Active Ingredients:</strong> ${item.active_ingredients || 'N/A'}</div>
+                <div><strong>Enzyme Target:</strong> ${item.enzyme || 'N/A'}</div>
+            </div>
+
+            <div style="font-size: 0.9rem; color: #34495e;">
+                <p><strong>Clinical Effect:</strong> ${item.clinical_effect || "Data pending."}</p>
+                <p><strong>Evidence:</strong> <span style="color: #2980b9;">${item.evidence || "Not Specified"}</span></p>
+                
+                <div style="background: #fff9db; padding: 12px; border-radius: 8px; border-left: 4px solid #f1c40f; margin-top: 10px;">
+                    <strong style="color: #856404;">Clinical Recommendation:</strong>
+                    <p style="margin: 5px 0 0 0; color: #856404;">${item.recommendation || "Consult clinical guidelines."}</p>
                 </div>
+
+                ${item.reference ? `
+                <div style="margin-top: 10px; font-size: 0.75rem;">
+                    <a href="${item.reference}" target="_blank" style="color: #3498db; text-decoration: none;">🔗 View Research Reference</a>
+                </div>` : ''}
             </div>
         `;
         container.appendChild(card);
@@ -146,7 +140,7 @@ function renderResults(matches, container) {
 
 function getSevColor(sev) {
     const s = String(sev).toUpperCase();
-    if (s.includes("HIGH") || s.includes("SEVERE") || s.includes("MAJOR") || s.includes("3")) return "#d63031"; 
-    if (s.includes("MODERATE") || s.includes("WARN") || s.includes("2")) return "#fdcb6e"; 
-    return "#00b894"; 
+    if (s.includes("MAJOR") || s.includes("SEVERE") || s.includes("HIGH")) return "#e74c3c"; 
+    if (s.includes("MODERATE") || s.includes("MEDIUM")) return "#f39c12"; 
+    return "#27ae60"; 
 }
