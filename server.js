@@ -14,10 +14,14 @@ let interactionsDB = [];
 let herbProfiles = {};
 let drugProfiles = {};
 
+// Load JSON profiles for the PK Waterfall
 try {
     herbProfiles = require('./herb_profiles.json');
     drugProfiles = require('./drug_profiles.json');
-} catch (e) { console.warn("⚠️ JSON profiles missing."); }
+    console.log("✅ Herb/Drug JSON Profiles Loaded");
+} catch (e) { 
+    console.warn("⚠️ JSON profiles missing or malformed. PK logic may be limited."); 
+}
 
 // --- 2. FULL SYNONYM BRIDGE ---
 const SYNONYM_BRIDGE = {
@@ -65,16 +69,11 @@ async function fetchPubMed(h, d) {
     } catch (e) { return 0; }
 }
 
-// --- 4. DATA LOADER (REPAIRED FOR RENDER) ---
+// --- 4. DATA LOADER ---
 async function loadCSV() {
     return new Promise((resolve) => {
-        // Log the current directory to debug the environment
-        console.log(`Current Working Directory: ${process.cwd()}`);
-        console.log(`📂 Attempting to locate CSV at: ${CSV_PATH}`);
-
         if (!fs.existsSync(CSV_PATH)) {
-            console.error("❌ CRITICAL: CSV file NOT found at the specified path.");
-            console.log("Check if your folder is named 'data' (lowercase) and the file is 'HDI_Master_List.csv'");
+            console.error("❌ CRITICAL: CSV file NOT found at", CSV_PATH);
             return resolve();
         }
 
@@ -82,7 +81,6 @@ async function loadCSV() {
         fs.createReadStream(CSV_PATH)
             .pipe(csv())
             .on('data', (row) => {
-                // This logic handles different column name formats
                 const keys = Object.keys(row);
                 const hK = keys.find(k => k.toLowerCase().includes('herb'));
                 const dK = keys.find(k => k.toLowerCase().includes('drug'));
@@ -91,52 +89,34 @@ async function loadCSV() {
 
                 if (row[hK] && row[dK]) {
                     interactionsDB.push({
-                        herb: row[hK].trim().toLowerCase(),
-                        drug: row[dK].trim().toLowerCase(),
-                        clinical_effect: row[eK] || "N/A",
-                        recommendation: row[rK] || "Monitor patient therapy.",
-                        source: "Master CSV"
+                        herb: String(row[hK]).trim().toLowerCase(),
+                        drug: String(row[dK]).trim().toLowerCase(),
+                        clinical_effect: row[eK] || "No effect documented.",
+                        recommendation: row[rK] || "Monitor clinical status.",
+                        source: "Verified Master Database"
                     });
                 }
             })
             .on('end', () => {
-                console.log("*****************************************");
-                if (interactionsDB.length > 0) {
-                    console.log(`✅ DATABASE SUCCESS: ${interactionsDB.length} records loaded.`);
-                } else {
-                    console.warn("⚠️ CSV parsed, but 0 records were valid. Check your column headers.");
-                }
-                console.log("*****************************************");
-                resolve();
-            })
-            .on('error', (err) => {
-                console.error("❌ Stream Error:", err);
+                console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records.`);
                 resolve();
             });
     });
 }
+
 // --- 5. ROUTES ---
 
-app.get('/api/list-all', (req, res) => {
-    res.json(interactionsDB);
-});
-
-app.get('/api/dashboard-stats', (req, res) => {
-    res.json({
-        total: interactionsDB.length,
-        herbs: Object.keys(herbProfiles).length,
-        drugs: Object.keys(drugProfiles).length
-    });
-});
+app.get('/api/list-all', (req, res) => res.json(interactionsDB));
 
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "No input provided." });
+    if (!text) return res.status(400).json({ error: "No text provided." });
 
     const input = text.toLowerCase();
     let detectedHerbs = [];
     let detectedDrugs = [];
 
+    // Detect entities using Synonym Bridge
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
             const entry = SYNONYM_BRIDGE[key];
@@ -145,62 +125,64 @@ app.post('/api/analyze-text', async (req, res) => {
         }
     });
 
-    const h = detectedHerbs[0] || "Unknown Herb";
-    const d = detectedDrugs[0] || "Unknown Drug";
+    // Fallback if no specific synonym matched but word exists in text
+    const h = detectedHerbs[0] || "unknown";
+    const d = detectedDrugs[0] || "unknown";
 
-    // --- WATERFALL 1: MASTER CSV ---
-    const csvMatch = interactionsDB.find(i => 
-        (i.herb === h.toLowerCase() && i.drug.includes(d.toLowerCase())) ||
-        (i.herb === d.toLowerCase() && i.drug.includes(h.toLowerCase()))
-    );
+    // --- WATERFALL 1: MASTER CSV (STRICT & FUZZY) ---
+    const csvMatch = interactionsDB.find(i => {
+        const searchH = h.toLowerCase();
+        const searchD = d.toLowerCase();
+        return (i.herb.includes(searchH) && i.drug.includes(searchD)) ||
+               (i.herb.includes(searchD) && i.drug.includes(searchH));
+    });
 
     if (csvMatch) {
-        return res.json({ results: [{ ...csvMatch, source: "Verified Master Database" }], entities: [h, d] });
+        return res.json({ results: [csvMatch], entities: [h, d] });
     }
 
-    // --- WATERFALL 2: BIOBERT (PubMed Search Integration) ---
+    // --- WATERFALL 2: PUBMED + BIOBERT ---
     const pCount = await fetchPubMed(h, d);
     const aiResponse = await queryBioBERT(text);
 
     if (pCount > 0 || (aiResponse && !aiResponse.error)) {
         return res.json({
             results: [{
-                // Heading fulfills your request to show BioBERT scanned the articles
-                source: `BioBERT AI Analysis (Scanned ${pCount} PubMed Articles)`,
+                source: `BioBERT AI Analysis (PubMed Count: ${pCount})`,
                 severity: pCount > 0 ? "EVIDENCE-BASED" : "PREDICTIVE",
                 clinical_effect: pCount > 0 
-                    ? `BioBERT neural engine cross-referenced literature and identified interaction markers for ${h} and ${d}.` 
-                    : `No direct PubMed matches found; however, BioBERT AI patterns suggest potential pharmacological risk.`,
-                recommendation: "Clinical evaluation suggested. Monitor for signs of altered drug efficacy or toxicity.",
+                    ? `AI engine cross-referenced ${pCount} PubMed articles for ${h} and ${d}.` 
+                    : `No PubMed articles found, but BioBERT patterns suggest a potential interaction.`,
+                recommendation: "Review with a clinician; evidence suggests potential interaction risk.",
                 data: aiResponse
             }],
             entities: [h, d]
         });
     }
 
-    // --- WATERFALL 3: PHARMACOKINETIC LOGIC ---
+    // --- WATERFALL 3: PHARMACOKINETIC (PK) ENZYME OVERLAP ---
     const hProf = herbProfiles[h.toLowerCase()];
     const dProf = drugProfiles[d.toLowerCase()];
-    if (hProf && dProf) {
+    if (hProf && dProf && hProf.enzymes && dProf.enzymes) {
         const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
         if (overlap.length > 0) {
             return res.json({
                 results: [{
-                    source: "BioBERT Pharmacokinetic Pathway Scan",
-                    severity: "MODERATE",
-                    clinical_effect: `Neural mapping detected metabolic competition via the shared ${overlap.join(', ')} pathway.`,
-                    recommendation: "Theoretical metabolic risk detected. Monitor drug serum levels if possible."
+                    source: "PK Pathway Analysis",
+                    severity: "MODERATE (THEORETICAL)",
+                    clinical_effect: `Shared metabolic pathway detected (${overlap.join(', ')}). Possible competition for absorption/metabolism.`,
+                    recommendation: "Monitor for changes in therapeutic drug levels."
                 }],
                 entities: [h, d]
             });
         }
     }
 
-    // FINAL
-    res.json({ results: [], entities: [h, d], message: `No interactions detected by BioBERT or Literature for ${h} and ${d}.` });
+    // FINAL FALLBACK
+    res.json({ results: [], entities: [h, d], message: "No interactions detected in local DB, Literature, or PK pathways." });
 });
 
 const PORT = process.env.PORT || 10000;
 loadCSV().then(() => {
-    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 CDSS Online`));
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server Online at Port ${PORT}`));
 });
