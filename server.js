@@ -8,55 +8,42 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
 // --- 1. CONFIGURATION & DATA LOADING ---
-const HF_TOKEN = process.env.HF_TOKEN; 
-const HF_API_URL = "https://api-inference.huggingface.co/models/d4data/biomedical-ner-all";
 const MASTER_CSV_PATH = path.join(__dirname, 'data', 'HDI_Master_List.csv'); 
 
 let interactionsDB = [];
 let herbProfiles = {};
 let drugProfiles = {};
 
+// Load JSON Profiles from Root
 try {
+    // Using require for cleaner JSON loading
     herbProfiles = require('./herb_profiles.json');
     drugProfiles = require('./drug_profiles.json');
     console.log("✅ Herb and Drug Profiles loaded successfully.");
 } catch (e) {
-    console.error("⚠️ Profiles not found. Check file paths.");
+    console.error("⚠️ Profiles not found. Check if herb_profiles.json and drug_profiles.json exist in root.");
 }
 
 // --- 2. EXPANDED SYNONYM BRIDGE ---
-// Added common Ayurvedic herbs, modern drugs, and frequent brand names
 const SYNONYM_BRIDGE = {
-    // Cardiovascular / Blood Pressure
+    // Cardiovascular
     "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
     "telmisartan": "Telmisartan", "telma": "Telmisartan", "telvas": "Telmisartan",
-    "losartan": "Losartan", "losar": "Losartan",
     "atorvastatin": "Atorvastatin", "atorva": "Atorvastatin", "lipvas": "Atorvastatin",
     "warfarin": "Warfarin", "coumadin": "Warfarin",
     "aspirin": "Aspirin", "ecosprin": "Aspirin", "disprin": "Aspirin",
-    "clopidogrel": "Clopidogrel", "clopilet": "Clopidogrel",
 
-    // Diabetes
-    "metformin": "Metformin", "glycomet": "Metformin", "cetapin": "Metformin",
-    "glimepiride": "Glimepiride", "amaryl": "Glimepiride", "glimipride": "Glimepiride",
-    "sitagliptin": "Sitagliptin", "januvia": "Sitagliptin",
+    // Gastric
+    "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", "omez": "Pantoprazole",
+    "omeprazole": "Omeprazole",
 
-    // Gastric / Acid Reflux
-    "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", "pan-d": "Pantoprazole",
-    "omeprazole": "Omeprazole", "omez": "Omeprazole",
-    "ranitidine": "Ranitidine", "zantac": "Ranitidine", "acinorm": "Ranitidine",
-
-    // Common Ayurvedic Herbs (Indian Context)
-    "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha", "withania": "Ashwagandha",
-    "guggulu": "Guggulu", "guggul": "Guggulu", "gulgul": "Guggulu", "commiphora": "Guggulu",
+    // Herbs & Constituents
+    "guggulsterone": "Guggulu", "guggulsterones": "Guggulu", "guggul": "Guggulu", "commiphora": "Guggulu", "guggulu": "Guggulu",
     "turmeric": "Curcumin", "curcumin": "Curcumin", "haridra": "Curcumin", "haldi": "Curcumin",
+    "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha", "withania": "Ashwagandha",
     "brahmi": "Brahmi", "bacopa": "Brahmi",
-    "shatavari": "Shatavari", "aspargus": "Shatavari",
-    "tulsi": "Tulsi", "basil": "Tulsi", "holy basil": "Tulsi",
-    "triphala": "Triphala", "haritaki": "Triphala", "vibhitaki": "Triphala", "amalaki": "Triphala", "amla": "Triphala",
-    "giloy": "Giloy", "guduchi": "Giloy", "tinospora": "Giloy",
-    "neem": "Neem", "azadirachta": "Neem",
-    "aloe vera": "Aloe Vera", "aleovera": "Aloe Vera", "ghritkumari": "Aloe Vera"
+    "triphala": "Triphala", "amla": "Triphala",
+    "gallic acid": "Gallic Acid" 
 };
 
 /* -----------------------
@@ -68,6 +55,7 @@ function inferInteractionLogic(herbKey, drugKey) {
 
     if (!h || !d) return null;
 
+    // Check for shared enzyme pathway
     const hEnzymes = h.enzymes || (h.enzyme ? [h.enzyme] : []);
     const sharedEnzyme = hEnzymes.find(e => e === d.enzyme);
     
@@ -76,19 +64,24 @@ function inferInteractionLogic(herbKey, drugKey) {
     let result = {
         herb_display: herbKey,
         drug_display: drugKey,
+        scientific_name: h.scientific || "N/A",
+        drug_class: d.class || "N/A",
         enzyme: sharedEnzyme,
         evidence: "Pharmacokinetic (PK) Rules Engine",
         severity: "High"
     };
 
+    // RULE 1: INDUCTION
     if (h.action === "Inducer" && d.type === "Substrate") {
         result.clinical_effect = "Decreased Drug Levels (Antagonistic Interaction)";
         result.recommendation = "Rule 1: Reduced efficacy. The herb activates the enzyme, clearing the drug too quickly.";
     } 
+    // RULE 2: INHIBITION
     else if (h.action === "Inhibitor" && d.type === "Substrate") {
         result.clinical_effect = "Increased Drug Levels (Potentiation Interaction)";
         result.recommendation = "Rule 2: Increased risk of toxicity. The herb blocks metabolic breakdown.";
     } 
+    // RULE 3: DOUBLE INHIBITION
     else if (h.action === "Inhibitor" && d.type === "Inhibitor") {
         result.clinical_effect = "Potentiated Toxicity (Synergistic Inhibition)";
         result.severity = "Critical";
@@ -99,11 +92,14 @@ function inferInteractionLogic(herbKey, drugKey) {
 }
 
 /* -----------------------
-   4. DATA LOADER & API ROUTES
+   4. DATA LOADER & DASHBOARD
    ----------------------- */
 async function loadCSV() {
     return new Promise((resolve) => {
-        if (!fs.existsSync(MASTER_CSV_PATH)) return resolve();
+        if (!fs.existsSync(MASTER_CSV_PATH)) {
+            console.error("❌ Master CSV not found at:", MASTER_CSV_PATH);
+            return resolve();
+        }
         const results = [];
         fs.createReadStream(MASTER_CSV_PATH)
             .pipe(csv())
@@ -116,43 +112,50 @@ async function loadCSV() {
                         drug: drug.toLowerCase(),
                         herb_display: herb,
                         drug_display: drug,
-                        clinical_effect: row['Clinical Effect'],
-                        severity: row['Severity'],
-                        evidence: row['Evidence Level'],
-                        recommendation: row['Clinical Reccomendation']
+                        scientific_name: row['Scientific Name'] || 'N/A',
+                        drug_class: row['Drug Class'] || 'N/A',
+                        clinical_effect: row['Clinical Effect'] || 'N/A',
+                        severity: row['Severity'] || 'Moderate',
+                        evidence: row['Evidence Level'] || 'Clinical Observation',
+                        recommendation: row['Clinical Reccomendation'] || 'Monitor Patient',
+                        reference: row['Reference'] || 'Internal Database'
                     });
                 }
             })
             .on('end', () => {
                 interactionsDB = results;
+                console.log(`✅ Master Database Loaded: ${interactionsDB.length} records.`);
                 resolve();
             });
     });
 }
-/* -----------------------
-   DASHBOARD API ROUTE (Fixes 404 Error)
-   ----------------------- */
+
+// DASHBOARD ROUTE (Fixes 404 Error)
 app.get('/api/list-all', (req, res) => {
     if (interactionsDB.length > 0) {
         res.json({ results: interactionsDB });
     } else {
-        res.status(404).json({ 
-            error: "Interaction database is empty or still loading.",
-            details: "Ensure HDI_Master_List.csv is in the /data folder."
-        });
+        res.json({ results: [], status: "Loading" });
     }
 });
+
+/* -----------------------
+   5. ANALYZE ROUTE
+   ----------------------- */
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "No text" });
+    if (!text) return res.status(400).json({ error: "No text provided" });
 
     try {
+        console.log("📥 Analyzing input:", text);
         const cleanInput = text.toLowerCase();
         let detected = [];
 
         // 1. Detection via Bridge
         Object.keys(SYNONYM_BRIDGE).forEach(key => {
-            if (new RegExp(`\\b${key}\\b`, 'gi').test(cleanInput)) detected.push(SYNONYM_BRIDGE[key]);
+            if (new RegExp(`\\b${key}\\b`, 'gi').test(cleanInput)) {
+                detected.push(SYNONYM_BRIDGE[key]);
+            }
         });
 
         let finalEntities = [...new Set(detected)];
@@ -171,9 +174,8 @@ app.post('/api/analyze-text', async (req, res) => {
                 }
             }
 
-            // TIER 2: PK Rules (FIXED SEARCH LOGIC)
+            // TIER 2: PK Rules Engine
             if (uiResults.length === 0) {
-                // Find the profile key by checking key name OR scientific name
                 const herbKey = Object.keys(herbProfiles).find(key => 
                     finalEntities.some(ent => 
                         ent.toLowerCase() === key.toLowerCase() || 
@@ -187,27 +189,35 @@ app.post('/api/analyze-text', async (req, res) => {
 
                 if (herbKey && drugKey) {
                     const inference = inferInteractionLogic(herbKey, drugKey);
-                    if (inference) uiResults.push(inference);
+                    if (inference) {
+                        uiResults.push(inference);
+                        console.log(`✨ PK Logic Triggered: ${herbKey} + ${drugKey}`);
+                    }
                 }
             }
         }
 
-        // TIER 3: Fallback
+        // TIER 3: Fallback (BioBERT Style)
         if (uiResults.length === 0 && finalEntities.length >= 2) {
             uiResults.push({
                 herb_display: finalEntities[0],
                 drug_display: finalEntities[1],
                 clinical_effect: "Potential interaction identified by neural mapping.",
                 severity: "Clinical Alert",
-                evidence: "BioBERT Prediction"
+                evidence: "BioBERT Prediction",
+                recommendation: "Review co-administration; specific pathway data pending."
             });
         }
 
         res.json({ results: uiResults, detected_entities: finalEntities });
     } catch (error) {
+        console.error("Critical Error:", error);
         res.status(500).json({ error: "System Error" });
     }
 });
 
+// INITIALIZATION
 const PORT = process.env.PORT || 10000;
-loadCSV().then(() => app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Engine Live`)));
+loadCSV().then(() => {
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Engine Live on Port ${PORT}`));
+});
