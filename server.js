@@ -60,7 +60,7 @@ const SYNONYM_BRIDGE = {
     "black pepper": { name: "Black pepper", type: "herb" }, "piper nigrum": { name: "Black pepper", type: "herb" }
 };
 
-// --- 3. EXTERNAL API LOGIC (UPDATED FOR YOUR MODEL) ---
+// --- 3. EXTERNAL API LOGIC ---
 async function queryBioBERT(text) {
     try {
         const response = await fetch("https://api-inference.huggingface.co/models/aditijaltade4/BIOBert-based-HDI-Checker", {
@@ -71,7 +71,7 @@ async function queryBioBERT(text) {
             method: "POST",
             body: JSON.stringify({ 
                 inputs: text,
-                options: { wait_for_model: true } // Ensures the 433MB model loads before replying
+                options: { wait_for_model: true }
             }),
         });
         const result = await response.json();
@@ -169,47 +169,42 @@ app.post('/api/analyze-text', async (req, res) => {
         return res.json({ results: [csvMatch], entities: [h, d] });
     }
 
+    // --- NEW LOGIC: ENZYME OVERLAP CHECK (MECHANISM PULL) ---
+    const hProf = herbProfiles[h.toLowerCase()];
+    const dProf = drugProfiles[d.toLowerCase()];
+    let overlapMechanism = "";
+    if (hProf?.enzymes && dProf?.enzymes) {
+        const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
+        if (overlap.length > 0) {
+            overlapMechanism = `Potential competition at metabolic pathway: ${overlap.join(', ')}.`;
+        }
+    }
+
     // Waterfall 2: PubMed & Trained BioBERT
     const pCount = await fetchPubMed(h, d);
     const aiResponse = await queryBioBERT(text);
 
-    // Logic for your fine-tuned model's labels
-    const hasAIInteraction = Array.isArray(aiResponse) && 
-                            aiResponse[0] && 
-                            aiResponse[0][0].label === "LABEL_1" && 
-                            aiResponse[0][0].score > 0.7;
+    // AI Confidence Logic Fix: Calculate score even if pCount exists
+    let aiScore = 0;
+    let hasAIInteraction = false;
+    if (Array.isArray(aiResponse) && aiResponse[0] && aiResponse[0][0]) {
+        hasAIInteraction = aiResponse[0][0].label === "LABEL_1";
+        aiScore = Math.round(aiResponse[0][0].score * 100);
+    }
 
     if (pCount > 0 || hasAIInteraction) {
         return res.json({
             results: [{
-                source: `BioBERT AI Prediction (Confidence: ${hasAIInteraction ? Math.round(aiResponse[0][0].score * 100) : 0}%)`,
+                source: `BioBERT AI Prediction (Confidence: ${aiScore}%)`,
                 severity: "MODERATE (AI Predicted)",
                 clinical_effect: pCount > 0 
-                    ? `Found ${pCount} literature matches. Possible interaction detected.` 
-                    : `AI identified high-risk pharmacokinetic interaction patterns for ${h} and ${d}.`,
-                recommendation: "Consult a pharmacist; potential metabolic pathway overlap detected.",
+                    ? `Found ${pCount} literature matches. ${overlapMechanism || "Interaction patterns detected."}` 
+                    : `AI identified high-risk pharmacokinetic interaction. ${overlapMechanism || ""}`,
+                recommendation: "Consult a clinical pharmacist. Monitor for changes in drug efficacy or toxicity.",
                 pubmed_count: pCount
             }],
             entities: [h, d]
         });
-    }
-
-    // Waterfall 3: PK Pathway
-    const hProf = herbProfiles[h.toLowerCase()];
-    const dProf = drugProfiles[d.toLowerCase()];
-    if (hProf?.enzymes && dProf?.enzymes) {
-        const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
-        if (overlap.length > 0) {
-            return res.json({
-                results: [{
-                    source: "PK Pathway Analysis",
-                    severity: "MODERATE",
-                    clinical_effect: `Shared metabolic pathway detected (${overlap.join(', ')}).`,
-                    recommendation: "Theoretical competition; monitor drug concentration."
-                }],
-                entities: [h, d]
-            });
-        }
     }
 
     res.json({ results: [], entities: [h, d], message: "No interaction found in local DB or AI analysis." });
