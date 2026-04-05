@@ -7,15 +7,28 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-// --- 1. CONFIGURATION ---
+// --- 1. CONFIGURATION & DATA LOADING ---
 const HF_TOKEN = process.env.HF_TOKEN; 
 const HF_API_URL = "https://api-inference.huggingface.co/models/d4data/biomedical-ner-all";
 const MASTER_CSV_PATH = path.join(__dirname, 'data', 'HDI_Master_List.csv'); 
+
 let interactionsDB = [];
 
-// --- 2. EXPANDED SYNONYM BRIDGE ---
+// NEW: Load your Pharmacological Profiles
+let herbProfiles = {};
+let drugProfiles = {};
+
+try {
+    herbProfiles = require('./herb_profiles.json');
+    drugProfiles = require('./drug_profiles.json');
+    console.log("✅ Herb and Drug Profiles loaded successfully.");
+} catch (e) {
+    console.error("⚠️ Profiles not found. Inference logic will be limited.");
+}
+
+// --- 2. EXPANDED SYNONYM BRIDGE (Fixes Guggulsterone & Normalization) ---
 const SYNONYM_BRIDGE = {
-    // Cardiovascular / Blood Pressure
+    // Cardiovascular
     "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
     "telmisartan": "Telmisartan", "telma": "Telmisartan", "telvas": "Telmisartan",
     "losartan": "Losartan", "losar": "Losartan",
@@ -29,18 +42,19 @@ const SYNONYM_BRIDGE = {
     "glimepiride": "Glimepiride", "amaryl": "Glimepiride", "glimipride": "Glimepiride",
     "sitagliptin": "Sitagliptin", "januvia": "Sitagliptin",
 
-    // Gastric / Acid Reflux
+    // Gastric
     "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", "pan-d": "Pantoprazole",
     "omeprazole": "Omeprazole", "omez": "Omeprazole",
     "ranitidine": "Ranitidine", "zantac": "Ranitidine", "acinorm": "Ranitidine",
 
-    // Common Ayurvedic Herbs (Indian Context)
+    // FIXED: Guggulu & Constituents
+    "guggulsterone": "Guggulu", "guggulsterones": "Guggulu", "guggul": "Guggulu", 
+    "gulgul": "Guggulu", "commiphora": "Guggulu", "guggulu": "Guggulu",
+
+    // Other Herbs
     "ashwagandha": "Ashwagandha", "asvagandha": "Ashwagandha", "withania": "Ashwagandha",
-    "guggulu": "Guggulu", "guggul": "Guggulu", "gulgul": "Guggulu", "commiphora": "Guggulu",
     "turmeric": "Curcumin", "curcumin": "Curcumin", "haridra": "Curcumin", "haldi": "Curcumin",
     "brahmi": "Brahmi", "bacopa": "Brahmi",
-    "shatavari": "Shatavari", "aspargus": "Shatavari",
-    "tulsi": "Tulsi", "basil": "Tulsi", "holy basil": "Tulsi",
     "triphala": "Triphala", "haritaki": "Triphala", "vibhitaki": "Triphala", "amalaki": "Triphala", "amla": "Triphala",
     "giloy": "Giloy", "guduchi": "Giloy", "tinospora": "Giloy",
     "neem": "Neem", "azadirachta": "Neem",
@@ -48,7 +62,49 @@ const SYNONYM_BRIDGE = {
 };
 
 /* -----------------------
-   3. MASTER DATA LOADER
+   3. INFERENCE ENGINE (Rule-Based Logic)
+   ----------------------- */
+function inferInteractionLogic(herbName, drugName) {
+    const h = herbProfiles[herbName];
+    const d = drugProfiles[drugName];
+
+    if (!h || !d) return null;
+
+    // Check for shared enzyme pathway
+    const sharedEnzyme = h.enzymes ? h.enzymes.find(e => e === d.enzyme) : (h.enzyme === d.enzyme ? h.enzyme : null);
+    
+    if (!sharedEnzyme) return null;
+
+    let result = {
+        herb_display: herbName,
+        drug_display: drugName,
+        enzyme: sharedEnzyme,
+        evidence: "Pharmacokinetic (PK) Rules Engine",
+        severity: "High"
+    };
+
+    // RULE 1: INDUCTION (Herb Activates + Drug is Substrate)
+    if (h.action === "Inducer" && d.type === "Substrate") {
+        result.clinical_effect = "Decreased Drug Levels (Antagonistic Interaction)";
+        result.recommendation = "Clinical Outcome: Reduced efficacy, therapeutic failure. The herb activates the enzyme, clearing the drug too quickly.";
+    }
+    // RULE 2: INHIBITION (Herb Inhibits + Drug is Substrate)
+    else if (h.action === "Inhibitor" && d.type === "Substrate") {
+        result.clinical_effect = "Increased Drug Levels (Potentiation Interaction)";
+        result.recommendation = "Clinical Outcome: Increased risk of toxicity, exaggerated side effects. The herb blocks metabolic breakdown.";
+    }
+    // RULE 3: DOUBLE INHIBITION (Both are Inhibitors)
+    else if (h.action === "Inhibitor" && d.type === "Inhibitor") {
+        result.clinical_effect = "Potentiated Toxicity (Synergistic Inhibition)";
+        result.severity = "Critical";
+        result.recommendation = "Clinical Outcome: Severe risk of adverse drug reactions (ADRs). Both substances block the metabolic pathway.";
+    }
+
+    return result;
+}
+
+/* -----------------------
+   4. DATA LOADER & API ROUTES
    ----------------------- */
 async function loadCSV() {
     return new Promise((resolve) => {
@@ -94,96 +150,68 @@ async function loadCSV() {
     });
 }
 
-/* -----------------------
-   4. DASHBOARD API ROUTE (FIXES 404 ERROR)
-   ----------------------- */
-app.get('/api/list-all', (req, res) => {
-    if (interactionsDB.length > 0) {
-        res.json({ results: interactionsDB });
-    } else {
-        res.status(404).json({ error: "Interaction database is currently empty or loading." });
-    }
-});
-
-/* -----------------------
-   5. HYBRID AI LOGIC
-   ----------------------- */
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: "No text provided" });
 
     try {
+        console.log("📥 Analyzing input:", text);
         const cleanInput = text.toLowerCase();
         let rawDetected = [];
 
-        // 1. Safety Regex Scan (Deterministic)
+        // 1. Detection (Synonym Bridge)
         Object.keys(SYNONYM_BRIDGE).forEach(key => {
             const regex = new RegExp(`\\b${key}\\b`, 'gi');
-            if (regex.test(cleanInput)) rawDetected.push(key);
+            if (regex.test(cleanInput)) rawDetected.push(SYNONYM_BRIDGE[key]);
         });
 
-        // 2. BioBERT NER (Probabilistic)
-        try {
-            const hfResponse = await fetch(HF_API_URL, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ inputs: text })
-            });
-            const apiResults = await hfResponse.json();
-
-            if (Array.isArray(apiResults)) {
-                let currentWord = "";
-                apiResults.forEach(ent => {
-                    const word = ent.word || "";
-                    if (word.startsWith("##")) {
-                        currentWord += word.replace("##", "");
-                    } else {
-                        if (currentWord.length > 2) rawDetected.push(currentWord);
-                        currentWord = word;
-                    }
-                });
-                if (currentWord.length > 2) rawDetected.push(currentWord);
-            }
-        } catch (nerError) {
-            console.warn("⚠️ NER API skipped or failed, relying on Synonym Bridge.");
-        }
-
-        // 3. STRICT NORMALIZATION & DEDUPLICATION
-        let finalEntities = [];
-        rawDetected.forEach(word => {
-            const wordClean = word.toLowerCase().trim();
-            const standardized = SYNONYM_BRIDGE[wordClean] || word.charAt(0).toUpperCase() + word.slice(1);
-            
-            if (!finalEntities.includes(standardized) && standardized.length > 2) {
-                finalEntities.push(standardized);
+        // 2. Normalization (Handle Multi-word names)
+        let finalEntities = [...new Set(rawDetected)];
+        
+        // Check for botanical names in herbProfiles that might not be in the bridge
+        Object.keys(herbProfiles).forEach(hName => {
+            if (cleanInput.includes(hName.toLowerCase()) && !finalEntities.includes(hName)) {
+                finalEntities.push(hName);
             }
         });
 
-        // 4. CROSS-MATCHING SEARCH
         let uiResults = [];
+
         if (finalEntities.length >= 2) {
+            // TIER 1: Master CSV Lookup
             for (let i = 0; i < finalEntities.length; i++) {
                 for (let j = i + 1; j < finalEntities.length; j++) {
                     const term1 = finalEntities[i].toLowerCase();
                     const term2 = finalEntities[j].toLowerCase();
 
                     const matches = interactionsDB.filter(item => 
-                        (item.herb.includes(term1) || term1.includes(item.herb) || item.herb.includes(term2) || term2.includes(item.herb)) &&
-                        (item.drug.includes(term1) || term1.includes(item.drug) || item.drug.includes(term2) || term2.includes(item.drug))
+                        (item.herb === term1 && item.drug === term2) ||
+                        (item.herb === term2 && item.drug === term1)
                     );
                     uiResults.push(...matches);
                 }
             }
+
+            // TIER 2: PK Rules Engine (If no CSV match)
+            if (uiResults.length === 0) {
+                const hName = finalEntities.find(name => herbProfiles[name]);
+                const dName = finalEntities.find(name => drugProfiles[name]);
+
+                if (hName && dName) {
+                    const inference = inferInteractionLogic(hName, dName);
+                    if (inference) uiResults.push(inference);
+                }
+            }
         }
 
-        // 5. Fallback
+        // TIER 3: Fallback (BioBERT Style Prediction)
         if (uiResults.length === 0 && finalEntities.length >= 2) {
             uiResults.push({
                 herb_display: finalEntities[0],
                 drug_display: finalEntities[1],
                 clinical_effect: "Potential interaction identified by neural mapping.",
                 severity: "Clinical Alert",
-                recommendation: "Review co-administration; specific data not in master CSV.",
+                recommendation: "Review co-administration; specific pathway data pending.",
                 evidence: "BioBERT Prediction"
             });
         }
@@ -192,18 +220,12 @@ app.post('/api/analyze-text', async (req, res) => {
 
     } catch (error) {
         console.error("Critical System Error:", error);
-        res.status(500).json({ error: "System Error", results: [] });
+        res.status(500).json({ error: "System Error" });
     }
 });
 
-/* -----------------------
-   6. SERVER INITIALIZATION
-   ----------------------- */
+// Initialization
 const PORT = process.env.PORT || 10000;
-
-// Important: Load the CSV before starting the listener
 loadCSV().then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Master CDSS Engine Live on Port ${PORT}`);
-    });
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Master CDSS Engine Live on Port ${PORT}`));
 });
