@@ -19,35 +19,29 @@ try {
     drugProfiles = require('./drug_profiles.json');
 } catch (e) { console.warn("⚠️ JSON profiles missing."); }
 
-// --- 2. FULL SYNONYM BRIDGE ---
+// --- 2. FULL SYNONYM BRIDGE (Updated with Type Categorization) ---
 const SYNONYM_BRIDGE = {
-    "amlodipine": "Amlodipine", "amlowas": "Amlodipine", "stamlo": "Amlodipine", "norvasc": "Amlodipine",
-    "telmisartan": "Telmisartan", "telma": "Telmisartan", "telvas": "Telmisartan",
-    "atorvastatin": "Atorvastatin", "atorva": "Atorvastatin", "lipvas": "Atorvastatin",
-    "warfarin": "Warfarin", "coumadin": "Warfarin",
-    "aspirin": "Aspirin", "ecosprin": "Aspirin", "disprin": "Aspirin",
-    "pantoprazole": "Pantoprazole", "pantocid": "Pantoprazole", "pan": "Pantoprazole", 
-    "omez": "Pantoprazole", "omeprazole": "Omeprazole",
-    "acorus calamus": "Acorus calamus", "vacha": "Acorus calamus",
-    "aesculus indica": "Aesculus indica", "indian horse chestnut": "Aesculus indica",
-    "allium sativum": "Allium sativum", "garlic": "Allium sativum",
-    "andrographis paniculata": "Andrographis paniculata", "kalmegh": "Andrographis paniculata",
-    "berberis aristata": "Berberis aristata", "daruharidra": "Berberis aristata",
-    "carum carvi": "Carum carvi", "krishna jeeraka": "Carum carvi",
-    "centella asiatica": "Centella asiatica", "mandukaparni": "Centella asiatica",
-    "commiphora wightii": "Commiphora wightii", "guggulu": "Commiphora wightii",
-    "curcuma longa": "Curcuma longa", "haridra": "Curcuma longa", "turmeric": "Curcuma longa", "haldi": "Curcuma longa",
-    "curcumin": "Curcumin", "curcuminoids": "Curcumin",
-    "glycyrrhiza glabra": "Glycyrrhiza glabra", "yashtimadhu": "Glycyrrhiza glabra", "mulethi": "Glycyrrhiza glabra",
-    "myristica fragrans": "Myristica fragrans", "jatiphala": "Myristica fragrans",
-    "narthex asafetida": "Narthex asafetida", "hing": "Narthex asafetida",
-    "phyllanthus amarus": "Phyllanthus amarus", "bhumyamalaki": "Phyllanthus amarus",
-    "salacia reticulata": "Salacia reticulata", "saptarangi": "Salacia reticulata",
-    "terminalia arjuna": "Terminalia arjuna", "arjuna": "Terminalia arjuna",
-    "terminalia chebula": "Terminalia chebula", "haritaki": "Terminalia chebula",
-    "brahmi": "Brahmi", "bacopa monnieri": "Brahmi",
-    "triphala": "Triphala", "amla": "Triphala", "triphala churna": "Triphala",
-    "gallic acid": "Gallic Acid", "ashwagandha": "Ashwagandha", "withania": "Ashwagandha"
+    "amlodipine": { name: "Amlodipine", type: "drug" }, "amlowas": { name: "Amlodipine", type: "drug" },
+    "stamlo": { name: "Amlodipine", type: "drug" }, "norvasc": { name: "Amlodipine", type: "drug" },
+    "telmisartan": { name: "Telmisartan", type: "drug" }, "telma": { name: "Telmisartan", type: "drug" },
+    "telvas": { name: "Telmisartan", type: "drug" }, "atorvastatin": { name: "Atorvastatin", type: "drug" },
+    "atorva": { name: "Atorvastatin", type: "drug" }, "lipvas": { name: "Atorvastatin", type: "drug" },
+    "warfarin": { name: "Warfarin", type: "drug" }, "coumadin": { name: "Warfarin", type: "drug" },
+    "aspirin": { name: "Aspirin", type: "drug" }, "ecosprin": { name: "Aspirin", type: "drug" },
+    "disprin": { name: "Aspirin", type: "drug" }, "pantoprazole": { name: "Pantoprazole", type: "drug" },
+    "pantocid": { name: "Pantoprazole", type: "drug" }, "pan": { name: "Pantoprazole", type: "drug" },
+    "omez": { name: "Pantoprazole", type: "drug" }, "omeprazole": { name: "Omeprazole", type: "drug" },
+    "vacha": { name: "Acorus calamus", type: "herb" }, "acorus calamus": { name: "Acorus calamus", type: "herb" },
+    "garlic": { name: "Allium sativum", type: "herb" }, "allium sativum": { name: "Allium sativum", type: "herb" },
+    "kalmegh": { name: "Andrographis paniculata", type: "herb" }, "daruharidra": { name: "Berberis aristata", type: "herb" },
+    "guggulu": { name: "Commiphora wightii", type: "herb" }, "commiphora wightii": { name: "Commiphora wightii", type: "herb" },
+    "haridra": { name: "Curcuma longa", type: "herb" }, "turmeric": { name: "Curcuma longa", type: "herb" },
+    "haldi": { name: "Curcuma longa", type: "herb" }, "curcuma longa": { name: "Curcuma longa", type: "herb" },
+    "yashtimadhu": { name: "Glycyrrhiza glabra", type: "herb" }, "mulethi": { name: "Glycyrrhiza glabra", type: "herb" },
+    "jatiphala": { name: "Myristica fragrans", type: "herb" }, "hing": { name: "Narthex asafetida", type: "herb" },
+    "arjuna": { name: "Terminalia arjuna", type: "herb" }, "haritaki": { name: "Terminalia chebula", type: "herb" },
+    "brahmi": { name: "Brahmi", type: "herb" }, "ashwagandha": { name: "Ashwagandha", type: "herb" },
+    "triphala": { name: "Triphala", type: "herb" }, "amla": { name: "Triphala", type: "herb" }
 };
 
 // --- 3. EXTERNAL API LOGIC ---
@@ -59,7 +53,6 @@ async function queryBioBERT(text) {
             body: JSON.stringify({ inputs: text }),
         });
         const data = await response.json();
-        if (data.error && data.error.includes("currently loading")) return { status: "AI Model Initializing" };
         return data;
     } catch (e) { return null; }
 }
@@ -76,10 +69,7 @@ async function fetchPubMed(h, d) {
 // --- 4. DATA LOADER ---
 async function loadCSV() {
     return new Promise((resolve) => {
-        if (!fs.existsSync(CSV_PATH)) {
-            console.error("❌ CSV NOT FOUND");
-            return resolve();
-        }
+        if (!fs.existsSync(CSV_PATH)) return resolve();
         interactionsDB = [];
         fs.createReadStream(CSV_PATH)
             .pipe(csv())
@@ -89,7 +79,6 @@ async function loadCSV() {
                 const dK = keys.find(k => k.toLowerCase().includes('drug'));
                 const eK = keys.find(k => k.toLowerCase().includes('effect'));
                 const rK = keys.find(k => k.toLowerCase().includes('recommendation') || k.toLowerCase().includes('reccomendation'));
-
                 if (row[hK] && row[dK]) {
                     interactionsDB.push({
                         herb: row[hK].trim().toLowerCase(),
@@ -100,10 +89,7 @@ async function loadCSV() {
                     });
                 }
             })
-            .on('end', () => {
-                console.log(`✅ CSV Loaded: ${interactionsDB.length} records.`);
-                resolve();
-            });
+            .on('end', () => resolve());
     });
 }
 
@@ -122,67 +108,70 @@ app.post('/api/analyze-text', async (req, res) => {
     if (!text) return res.status(400).json({ error: "No input provided." });
 
     const input = text.toLowerCase();
-    let finalResults = [];
+    let detectedHerbs = [];
+    let detectedDrugs = [];
 
-    // --- LOGIC 1: BIOBERT SCAN (Always run first) ---
-    const aiResponse = await queryBioBERT(text);
-    if (aiResponse) {
-        finalResults.push({ 
-            source: "BioBERT AI Analysis", 
-            clinical_effect: "AI detected interaction markers in clinical text.",
-            data: aiResponse 
-        });
-    }
-
-    // --- LOGIC 2: SYNONYM BRIDGE (The "Enhancer") ---
-    let detected = [];
+    // Step 1: Detect and Categorize
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
-            detected.push(SYNONYM_BRIDGE[key]);
+            const entry = SYNONYM_BRIDGE[key];
+            if (entry.type === 'herb') detectedHerbs.push(entry.name);
+            else detectedDrugs.push(entry.name);
         }
     });
 
-    let entities = [...new Set(detected)];
+    const h = detectedHerbs[0] || "Unknown Herb";
+    const d = detectedDrugs[0] || "Unknown Drug";
 
-    // --- LOGIC 3: PUBMED (Literature Search) ---
-    // If bridge found entities, use them. Otherwise, attempt to extract nouns from text.
-    let searchH, searchD;
-    if (entities.length >= 2) {
-        searchH = entities[0];
-        searchD = entities[1];
-    } else {
-        const words = text.split(/\s+/).filter(w => w.length > 4);
-        searchH = words[0] || "Unknown";
-        searchD = words[1] || "Unknown";
+    // WATERFALL 1: Check CSV
+    const csvMatch = interactionsDB.find(i => 
+        (i.herb === h.toLowerCase() && i.drug.includes(d.toLowerCase())) ||
+        (i.herb === d.toLowerCase() && i.drug.includes(h.toLowerCase()))
+    );
+
+    if (csvMatch) {
+        return res.json({ results: [{ ...csvMatch, source: "Verified Master Database" }], entities: [h, d] });
     }
 
-    if (searchH !== "Unknown" && searchD !== "Unknown") {
-        const pCount = await fetchPubMed(searchH, searchD);
-        finalResults.push({ 
-            source: "PubMed Literature", 
-            clinical_effect: pCount > 0 
-                ? `Found ${pCount} clinical papers for ${searchH} & ${searchD}.` 
-                : `No direct clinical evidence for ${searchH} & ${searchD} found in PubMed.` 
+    // WATERFALL 2: BioBERT + PubMed
+    const pCount = await fetchPubMed(h, d);
+    if (pCount > 0) {
+        const aiResponse = await queryBioBERT(text);
+        return res.json({
+            results: [{
+                source: "Clinical Literature (PubMed + BioBERT)",
+                severity: "EVIDENCE-BASED",
+                clinical_effect: `Found ${pCount} clinical studies. AI identifies interaction markers in text.`,
+                recommendation: "Review PubMed clinical evidence for safety profiles.",
+                data: aiResponse
+            }],
+            entities: [h, d]
         });
     }
 
-    // --- LOGIC 4: MASTER CSV MATCH ---
-    if (entities.length >= 2) {
-        const matches = interactionsDB.filter(i => 
-            (i.herb === entities[0].toLowerCase() && i.drug.includes(entities[1].toLowerCase())) ||
-            (i.herb === entities[1].toLowerCase() && i.drug.includes(entities[0].toLowerCase()))
-        );
-        finalResults.push(...matches);
+    // WATERFALL 3: Pharmacokinetic Logic
+    const hProf = herbProfiles[h.toLowerCase()];
+    const dProf = drugProfiles[d.toLowerCase()];
+    if (hProf && dProf) {
+        const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
+        if (overlap.length > 0) {
+            return res.json({
+                results: [{
+                    source: "Pharmacokinetic Analysis",
+                    severity: "MODERATE",
+                    clinical_effect: `Potential metabolic competition via shared ${overlap.join(', ')} pathway.`,
+                    recommendation: "Theoretical metabolic risk; monitor drug concentration levels."
+                }],
+                entities: [h, d]
+            });
+        }
     }
 
-    res.json({ 
-        results: finalResults, 
-        entities: entities.length > 0 ? entities : [searchH, searchD] 
-    });
+    // FINAL: No Interaction Found
+    res.json({ results: [], entities: [h, d], message: `No interaction present between ${h} and ${d} across all clinical layers.` });
 });
 
-// --- 6. START ---
 const PORT = process.env.PORT || 10000;
 loadCSV().then(() => {
-    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 CDSS Online` ));
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 CDSS Online`));
 });
