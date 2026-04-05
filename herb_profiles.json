@@ -1,0 +1,21 @@
+{
+  "Acorus calamus": { "enzymes": ["CYP2D6", "CYP3A4"], "action": "Inhibitor", "scientific": "Vacha" },
+  "Aesculus indica": { "enzymes": ["CYP1A2"], "action": "Inducer", "secondary_enzymes": ["CYP2C9", "CYP3A4"], "secondary_action": "Inhibitor", "scientific": "Indian Horse Chestnut" },
+  "Allium sativum": { "enzymes": ["CYP1A1", "CYP1A2", "CYP2B1", "CYP2B2"], "action": "Inducer", "secondary_enzymes": ["CYP2E1"], "secondary_action": "Inhibitor", "scientific": "Garlic" },
+  "Andrographis paniculata": { "enzymes": ["CYP1A1", "CYP1A2", "CYP2C6", "CYP3A1", "CYP3A2"], "action": "Inducer", "secondary_enzymes": ["CYP2C9", "CYP2C11", "CYP2D6", "CYP3A4"], "secondary_action": "Inhibitor", "scientific": "Kalmegh" },
+  "Berberis aristata": { "enzymes": ["CYP1A1", "CYP1A2", "CYP2E1", "CYP3A11", "CYP4A10", "CYP4A14"], "action": "Inhibitor", "scientific": "Daruharidra" },
+  "Carum carvi": { "enzymes": ["CYP1A1"], "action": "Inhibitor", "scientific": "Krishna Jeeraka" },
+  "Centella asiatica": { "enzymes": ["CYP2C9", "CYP2C19", "CYP3A4"], "action": "Inhibitor", "scientific": "Mandukaparni" },
+  "Commiphora wightii": { "enzymes": ["CYP3A", "CYP3A4"], "action": "Inducer", "scientific": "Guggulu" },
+  "Curcuma longa": { "enzymes": ["CYP1A1", "CYP1A2", "CYP2B1", "CYP2B2", "CYP2C9", "CYP2D6", "CYP2E1", "CYP3A4"], "action": "Inhibitor", "scientific": "Haridra" },
+  "Curcumin": { "enzymes": ["CYP1A2", "CYP2B6", "CYP2D6", "CYP3A4"], "action": "Inhibitor", "scientific": "Curcuminoids" },
+  "Glycyrrhiza glabra": { "enzymes": ["CYP3A4"], "action": "Inducer", "scientific": "Yashtimadhu" },
+  "Myristica fragrans": { "enzymes": ["CYP2C9", "CYP3A4"], "action": "Inhibitor", "scientific": "Jatiphala" },
+  "Narthex asafetida": { "enzymes": ["CYP2C11", "CYP2D"], "action": "Inhibitor", "scientific": "Hing" },
+  "Phyllanthus amarus": { "enzymes": ["CYP1A1", "CYP2B1", "CYP2B2", "CYP2E1"], "action": "Inhibitor", "scientific": "Bhumyamalaki" },
+  "Salacia reticulata": { "enzymes": ["CYP1A1", "CYP1A2", "CYP2B", "CYP2C"], "action": "Inducer", "scientific": "Saptarangi" },
+  "Terminalia arjuna": { "enzymes": ["CYP2A"], "action": "Inhibitor", "scientific": "Arjuna" },
+  "Terminalia chebula": { "enzymes": ["CYP450"], "action": "Inhibitor", "scientific": "Haritaki" },
+  "Brahmi": { "enzymes": ["CYP3A4"], "action": "Inhibitor", "scientific": "Bacopa monnieri" },
+  "Triphala": { "enzymes": ["CYP1A2", "CYP2C9", "CYP2C19"], "action": "Inhibitor", "secondary_action": "Inducer", "scientific": "Triphala Churna" }
+}
