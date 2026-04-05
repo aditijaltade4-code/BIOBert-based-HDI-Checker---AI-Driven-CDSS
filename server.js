@@ -109,7 +109,7 @@ async function loadCSV() {
                 if (herb && drug) {
                     results.push({
                         herb: herb.toLowerCase(),
-                        drug: drug.toLowerCase(),
+                        drug: drug.toLowerCase(), // This now stores the full string (including lists)
                         herb_display: herb,
                         drug_display: drug,
                         scientific_name: row['Scientific Name'] || 'N/A',
@@ -130,7 +130,7 @@ async function loadCSV() {
     });
 }
 
-// DASHBOARD ROUTE (Fixes 404 Error)
+// DASHBOARD ROUTE
 app.get('/api/list-all', (req, res) => {
     if (interactionsDB.length > 0) {
         res.json({ results: interactionsDB });
@@ -162,14 +162,23 @@ app.post('/api/analyze-text', async (req, res) => {
         let uiResults = [];
 
         if (finalEntities.length >= 2) {
-            // TIER 1: CSV Lookup
+            // TIER 1: CSV Lookup (FIXED TO HANDLE LISTS IN DRUG NAME)
             for (let i = 0; i < finalEntities.length; i++) {
                 for (let j = i + 1; j < finalEntities.length; j++) {
                     const t1 = finalEntities[i].toLowerCase();
                     const t2 = finalEntities[j].toLowerCase();
-                    const matches = interactionsDB.filter(item => 
-                        (item.herb === t1 && item.drug === t2) || (item.herb === t2 && item.drug === t1)
-                    );
+
+                    const matches = interactionsDB.filter(item => {
+                        // Check Herb match
+                        const herbMatch = (item.herb === t1 || item.herb === t2);
+                        if (!herbMatch) return false;
+
+                        // Check Drug match (Checks if search drug is inside the CSV cell's list)
+                        const searchDrug = (item.herb === t1) ? t2 : t1;
+                        const drugList = item.drug.split(',').map(d => d.trim().toLowerCase());
+                        
+                        return drugList.includes(searchDrug) || item.drug.includes(searchDrug);
+                    });
                     uiResults.push(...matches);
                 }
             }
