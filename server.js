@@ -142,24 +142,58 @@ app.post('/api/analyze-text', async (req, res) => {
     if (!text) return res.status(400).json({ error: "No input." });
 
     const input = text.toLowerCase();
-    let detectedHerbs = [];
-    let detectedDrugs = [];
+    let detectedHerbs = new Set();
+    let detectedDrugs = new Set();
 
-    // Entity Recognition
-    Object.keys(SYNONYM_BRIDGE).forEach(key => {
-        if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
+    // 1. Sort keys by length (longest first) so "Gallic acid" matches before "Gallic"
+    const sortedKeys = Object.keys(SYNONYM_BRIDGE).sort((a, b) => b.length - a.length);
+
+    sortedKeys.forEach(key => {
+        // Use a more flexible regex that handles multi-word keys
+        const regex = new RegExp(`\\b${key.toLowerCase()}\\b`, 'gi');
+        if (regex.test(input)) {
             const entry = SYNONYM_BRIDGE[key];
-            if (entry.type === 'herb' && !detectedHerbs.includes(entry.name)) detectedHerbs.push(entry.name);
-            else if (entry.type === 'drug' && !detectedDrugs.includes(entry.name)) detectedDrugs.push(entry.name);
+            if (entry.type === 'herb') detectedHerbs.add(entry.name);
+            else if (entry.type === 'drug') detectedDrugs.add(entry.name);
         }
     });
 
-    const h = detectedHerbs[0] || "unknown";
-    const d = detectedDrugs[0] || "unknown";
+    const hList = Array.from(detectedHerbs);
+    const dList = Array.from(detectedDrugs);
 
-    if (h === "unknown" || d === "unknown") {
-        return res.json({ results: [], entities: [h, d], message: "Please specify both a herb and a drug." });
+    // CRITICAL LOG: See what the system recognized
+    console.log(`🔍 Detected: Herbs[${hList}] | Drugs[${dList}]`);
+
+    if (hList.length === 0 || dList.length === 0) {
+        return res.json({ results: [], entities: [hList[0]||"None", dList[0]||"None"], message: "Identify both a herb and a drug." });
     }
+
+    // We test the first pair found
+    const h = hList[0];
+    const d = dList[0];
+
+    // WATERFALL 1: CSV SEARCH
+    console.log(`[W1] Searching CSV for: "${h}" + "${d}"`);
+    
+    const csvMatch = interactionsDB.find(i => {
+        const rowH = i.herb.toLowerCase().trim();
+        const rowD = i.drug.toLowerCase().trim();
+        const findH = h.toLowerCase().trim();
+        const findD = d.toLowerCase().trim();
+
+        // Check A+B or B+A
+        return (rowH.includes(findH) && rowD.includes(findD)) || 
+               (rowH.includes(findD) && rowD.includes(findH));
+    });
+
+    if (csvMatch) {
+        console.log("✅ W1 MATCH FOUND!");
+        return res.json({ results: [csvMatch], entities: [h, d] });
+    }
+
+    console.log(`❌ W1 Missed. Falling through to AI...`);
+    // ... rest of your AI code ...
+});
 
   // --- WATERFALL 1: CSV (REPAIRED) ---
 console.log(`[W1] Searching CSV for: ${h} + ${d}`);
