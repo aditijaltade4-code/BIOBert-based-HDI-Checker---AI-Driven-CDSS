@@ -4,12 +4,15 @@ const path = require('path');
 const csv = require('csv-parser');
 const fetch = require('node-fetch');
 
+// If you are using a .env file locally, uncomment the line below:
+// require('dotenv').config(); 
+
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-// --- 1. DATA PATHS ---
-const CSV_PATH = path.join(__dirname, 'data', 'HDI_Master_List.csv');
+// --- 1. DATA PATHS (Force Absolute Paths for Windows) ---
+const CSV_PATH = path.resolve(__dirname, 'data', 'HDI_Master_List.csv');
 let interactionsDB = [];
 let herbProfiles = {};
 let drugProfiles = {};
@@ -24,7 +27,6 @@ try {
 
 // --- 2. THE COMPREHENSIVE SYNONYM BRIDGE ---
 const SYNONYM_BRIDGE = {
-    // --- DRUGS & BRANDS ---
     "metformin": { name: "Metformin", type: "drug" }, "glycomet": { name: "Metformin", type: "drug" },
     "amitriptyline": { name: "Amitriptyline", type: "drug" }, "elavil": { name: "Amitriptyline", type: "drug" },
     "amlodipine": { name: "Amlodipine", type: "drug" }, "norvasc": { name: "Amlodipine", type: "drug" },
@@ -39,8 +41,6 @@ const SYNONYM_BRIDGE = {
     "glimepiride": { name: "Glimepiride", type: "drug" }, "amaryl": { name: "Glimepiride", type: "drug" },
     "cisplatin": { name: "Cisplatin", type: "drug" }, "gentamicin": { name: "Gentamicin", type: "drug" },
     "midazolam": { name: "Midazolam", type: "drug" }, "versed": { name: "Midazolam", type: "drug" },
-
-    // --- HERBS & SCIENTIFIC NAMES ---
     "triphala": { name: "Triphala", type: "herb" }, "terminalia chebula": { name: "Triphala", type: "herb" },
     "ashwagandha": { name: "Ashwagandha", type: "herb" }, "withania somnifera": { name: "Ashwagandha", type: "herb" },
     "gokshura": { name: "Gokshura", type: "herb" }, "tribulus terrestris": { name: "Gokshura", type: "herb" },
@@ -62,23 +62,24 @@ const SYNONYM_BRIDGE = {
 
 // --- 3. EXTERNAL API LOGIC ---
 async function queryBioBERT(text) {
-    if (!process.env.HF_TOKEN) {
-        console.error("⚠️ HF_TOKEN missing. Skipping AI check.");
+    const token = process.env.HF_TOKEN;
+    if (!token) {
+        console.error("❌ BioBERT Error: HF_TOKEN environment variable is missing.");
         return null;
     }
     try {
+        console.log("📡 Querying BioBERT AI...");
         const response = await fetch("https://api-inference.huggingface.co/models/aditijaltade4/BIOBert-based-HDI-Checker", {
             headers: { 
-                Authorization: `Bearer ${process.env.HF_TOKEN}`, 
+                Authorization: `Bearer ${token.trim()}`, 
                 "Content-Type": "application/json" 
             },
             method: "POST",
-            body: JSON.stringify({ 
-                inputs: text,
-                options: { wait_for_model: true }
-            }),
+            body: JSON.stringify({ inputs: text, options: { wait_for_model: true } }),
         });
-        return await response.json();
+        const resJson = await response.json();
+        console.log("🤖 AI Response Received:", JSON.stringify(resJson));
+        return resJson;
     } catch (e) { 
         console.error("BioBERT Query Error:", e);
         return null; 
@@ -94,17 +95,19 @@ async function fetchPubMed(h, d) {
     } catch (e) { return 0; }
 }
 
-// --- 4. DATA LOADER ---
+// --- 4. DATA LOADER (REPAIRED FOR WINDOWS/BOM) ---
 async function loadCSV() {
     return new Promise((resolve) => {
         if (!fs.existsSync(CSV_PATH)) {
-            console.error(`❌ FILE NOT FOUND: ${CSV_PATH}`);
+            console.error(`❌ CSV NOT FOUND: ${CSV_PATH}`);
             return resolve();
         }
 
         interactionsDB = [];
         fs.createReadStream(CSV_PATH)
-            .pipe(csv({ mapHeaders: ({ header }) => header.trim().toLowerCase() }))
+            .pipe(csv({ 
+                mapHeaders: ({ header }) => header.trim().toLowerCase().replace(/[^\x20-\x7E]/g, '') 
+            }))
             .on('data', (row) => {
                 const entry = {
                     herb: (row['herb'] || row['herb name'] || "").toLowerCase().trim(),
@@ -136,7 +139,6 @@ app.post('/api/analyze-text', async (req, res) => {
     let detectedHerbs = [];
     let detectedDrugs = [];
 
-    // Entity Detection
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
             const entry = SYNONYM_BRIDGE[key];
@@ -152,21 +154,19 @@ app.post('/api/analyze-text', async (req, res) => {
         return res.json({ results: [], entities: [h, d], message: "Identify both a herb and a drug." });
     }
 
-    // --- WATERFALL 1: CSV MASTER ---
-    console.log(`[Waterfall 1] Checking CSV: ${h} + ${d}`);
-    const csvMatch = interactionsDB.find(i => {
-        const dbH = i.herb.toLowerCase();
-        const dbD = i.drug.toLowerCase();
-        return (dbH.includes(h.toLowerCase()) && dbD.includes(d.toLowerCase())) || 
-               (dbH.includes(d.toLowerCase()) && dbD.includes(h.toLowerCase()));
-    });
+    // WATERFALL 1: CSV
+    console.log(`[W1] Searching CSV for: ${h} + ${d}`);
+    const csvMatch = interactionsDB.find(i => 
+        (i.herb.includes(h.toLowerCase()) && i.drug.includes(d.toLowerCase())) || 
+        (i.herb.includes(d.toLowerCase()) && i.drug.includes(h.toLowerCase()))
+    );
 
-    if (csvMatch && csvMatch.clinical_effect && csvMatch.clinical_effect !== "No effect documented.") {
+    if (csvMatch && csvMatch.clinical_effect !== "No effect documented.") {
         return res.json({ results: [csvMatch], entities: [h, d] });
     }
 
-    // --- WATERFALL 2: BioBERT & PubMed ---
-    console.log(`[Waterfall 2] CSV Fail. Checking AI for: ${h} + ${d}`);
+    // WATERFALL 2: BioBERT & PubMed
+    console.log(`[W2] Falling through to AI for: ${h} + ${d}`);
     try {
         const [aiResponse, pCount] = await Promise.all([queryBioBERT(text), fetchPubMed(h, d)]);
         let aiScore = 0;
@@ -183,22 +183,20 @@ app.post('/api/analyze-text', async (req, res) => {
                 results: [{
                     source: `BioBERT AI (Confidence: ${aiScore}%)`,
                     severity: "MODERATE (AI Predicted)",
-                    clinical_effect: pCount > 0 ? `AI detected interaction pattern. PubMed found ${pCount} matches.` : "AI model identified high-risk pharmacokinetic pattern.",
-                    recommendation: "Clinical monitoring advised. AI suggests potential interference.",
-                    mechanism: "Transformer-based NLP Pattern Recognition.",
+                    clinical_effect: pCount > 0 ? `AI detected interaction. PubMed found ${pCount} matches.` : "AI model identified high-risk interaction pattern.",
+                    recommendation: "Clinical monitoring advised.",
+                    mechanism: "NLP Pattern Recognition.",
                     pubmed_count: pCount,
                     evidence: pCount > 0 ? "PubMed Matches" : "In-silico Prediction"
                 }],
                 entities: [h, d]
             });
         }
-    } catch (e) { console.error("AI Waterfall Error:", e); }
+    } catch (e) { console.error("AI Error:", e); }
 
-    // --- WATERFALL 3: PK OVERLAP ---
-    console.log(`[Waterfall 3] AI Fail. Checking Enzyme Overlap: ${h} + ${d}`);
+    // WATERFALL 3: Enzyme Overlap
     const hProf = herbProfiles[h.toLowerCase()];
     const dProf = drugProfiles[d.toLowerCase()];
-
     if (hProf?.enzymes && dProf?.enzymes) {
         const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
         if (overlap.length > 0) {
@@ -206,9 +204,9 @@ app.post('/api/analyze-text', async (req, res) => {
                 results: [{
                     source: "Pharmacokinetic Logic Engine",
                     severity: "THEORETICAL",
-                    clinical_effect: `Overlap detected on pathways: ${overlap.join(', ')}.`,
-                    mechanism: `Potential competition for metabolic enzymes.`,
-                    recommendation: "Monitor drug plasma levels; theoretical interaction via shared pathways.",
+                    clinical_effect: `Overlap detected on: ${overlap.join(', ')}.`,
+                    mechanism: `Potential metabolic competition.`,
+                    recommendation: "Monitor drug levels.",
                     evidence: "PK Mapping"
                 }],
                 entities: [h, d]
@@ -216,7 +214,7 @@ app.post('/api/analyze-text', async (req, res) => {
         }
     }
 
-    res.json({ results: [], entities: [h, d], message: "No interaction found in Database, AI, or Enzyme profiles." });
+    res.json({ results: [], entities: [h, d], message: "No interaction detected." });
 });
 
 app.get('/api/list-all', (req, res) => res.json(interactionsDB));
