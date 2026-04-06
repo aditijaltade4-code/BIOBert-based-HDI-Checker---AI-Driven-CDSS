@@ -18,8 +18,9 @@ let herbProfiles = {};
 let drugProfiles = {};
 
 try {
-    herbProfiles = require('./herb_profiles.json');
-    drugProfiles = require('./drug_profiles.json');
+    // Using path.resolve here for consistency
+    herbProfiles = require(path.resolve(__dirname, 'herb_profiles.json'));
+    drugProfiles = require(path.resolve(__dirname, 'drug_profiles.json'));
     console.log("✅ Herb/Drug JSON Profiles Loaded");
 } catch (e) { 
     console.warn("⚠️ JSON profiles missing or malformed."); 
@@ -60,7 +61,7 @@ const SYNONYM_BRIDGE = {
     "black pepper": { name: "Black pepper", type: "herb" }, "piper nigrum": { name: "Black pepper", type: "herb" }
 };
 
-// --- 3. EXTERNAL API LOGIC ---
+// --- 3. EXTERNAL API LOGIC (FIXED FOR HF ROUTER) ---
 async function queryBioBERT(text) {
     const token = process.env.HF_TOKEN;
     if (!token) {
@@ -68,8 +69,9 @@ async function queryBioBERT(text) {
         return null;
     }
     try {
-        console.log("📡 Querying BioBERT AI...");
-        const response = await fetch("https://api-inference.huggingface.co/models/aditijaltade4/BIOBert-based-HDI-Checker", {
+        console.log("📡 Querying BioBERT via Hugging Face Router...");
+        // URL UPDATED TO NEW ROUTER ENDPOINT
+        const response = await fetch("https://router.huggingface.co/hf-inference/models/aditijaltade4/BIOBert-based-HDI-Checker", {
             headers: { 
                 Authorization: `Bearer ${token.trim()}`, 
                 "Content-Type": "application/json" 
@@ -77,8 +79,15 @@ async function queryBioBERT(text) {
             method: "POST",
             body: JSON.stringify({ inputs: text, options: { wait_for_model: true } }),
         });
+
         const resJson = await response.json();
         console.log("🤖 AI Response Received:", JSON.stringify(resJson));
+
+        if (resJson.error) {
+            console.error("⚠️ Hugging Face Error:", resJson.error);
+            return null;
+        }
+
         return resJson;
     } catch (e) { 
         console.error("BioBERT Query Error:", e);
@@ -139,6 +148,7 @@ app.post('/api/analyze-text', async (req, res) => {
     let detectedHerbs = [];
     let detectedDrugs = [];
 
+    // Improved Entity Detection (Regex Case-Insensitive)
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
             const entry = SYNONYM_BRIDGE[key];
@@ -174,7 +184,8 @@ app.post('/api/analyze-text', async (req, res) => {
 
         if (Array.isArray(aiResponse) && aiResponse[0]) {
             const top = Array.isArray(aiResponse[0]) ? aiResponse[0][0] : aiResponse[0];
-            hasAI = top.label === "LABEL_1" || top.score > 0.6;
+            // Adjusting logic to catch model-specific labels
+            hasAI = top.label === "LABEL_1" || top.label === "INTERACTION" || top.score > 0.6;
             aiScore = Math.round(top.score * 100);
         }
 
