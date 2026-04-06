@@ -62,6 +62,10 @@ const SYNONYM_BRIDGE = {
 
 // --- 3. EXTERNAL API LOGIC ---
 async function queryBioBERT(text) {
+    if (!process.env.HF_TOKEN) {
+        console.error("⚠️ HF_TOKEN missing. Skipping AI check.");
+        return null;
+    }
     try {
         const response = await fetch("https://api-inference.huggingface.co/models/aditijaltade4/BIOBert-based-HDI-Checker", {
             headers: { 
@@ -74,8 +78,7 @@ async function queryBioBERT(text) {
                 options: { wait_for_model: true }
             }),
         });
-        const result = await response.json();
-        return result;
+        return await response.json();
     } catch (e) { 
         console.error("BioBERT Query Error:", e);
         return null; 
@@ -91,28 +94,18 @@ async function fetchPubMed(h, d) {
     } catch (e) { return 0; }
 }
 
+// --- 4. DATA LOADER ---
 async function loadCSV() {
     return new Promise((resolve) => {
-        // 1. Check if file actually exists
         if (!fs.existsSync(CSV_PATH)) {
-            console.error(`❌ FILE NOT FOUND: Check this path -> ${CSV_PATH}`);
+            console.error(`❌ FILE NOT FOUND: ${CSV_PATH}`);
             return resolve();
         }
 
-        console.log("📂 File found. Starting stream...");
         interactionsDB = [];
-
         fs.createReadStream(CSV_PATH)
-            .pipe(csv({ 
-                mapHeaders: ({ header }) => header.trim().toLowerCase() // Force headers to lowercase
-            }))
+            .pipe(csv({ mapHeaders: ({ header }) => header.trim().toLowerCase() }))
             .on('data', (row) => {
-                // 2. Log the first row to see exactly what the keys look like
-                if (interactionsDB.length === 0) {
-                    console.log("📝 First row keys detected:", Object.keys(row));
-                }
-
-                // Map keys using the lowercase version we forced above
                 const entry = {
                     herb: (row['herb'] || row['herb name'] || "").toLowerCase().trim(),
                     drug: (row['drug'] || row['drug name'] || "").toLowerCase().trim(),
@@ -125,27 +118,16 @@ async function loadCSV() {
                     pk_pd: row['pkpd'] || row['pk_pd'] || "N/A",
                     source: "HD Master Database"
                 };
-
-                if (entry.herb && entry.drug) {
-                    interactionsDB.push(entry);
-                }
-            })
-            .on('error', (err) => {
-                console.error("❌ STREAM ERROR:", err.message);
+                if (entry.herb && entry.drug) interactionsDB.push(entry);
             })
             .on('end', () => {
-                if (interactionsDB.length === 0) {
-                    console.warn("⚠️ DATA LOADED: 0 records. Is the CSV empty or headers mismatched?");
-                } else {
-                    console.log(`✅ SUCCESS: ${interactionsDB.length} records loaded into memory.`);
-                }
+                console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records.`);
                 resolve();
             });
     });
 }
-// --- 5. ROUTES ---
-app.get('/api/list-all', (req, res) => res.json(interactionsDB));
 
+// --- 5. ROUTES ---
 app.post('/api/analyze-text', async (req, res) => {
     const { text } = req.body;
     if (!text) return res.status(400).json({ error: "No input provided." });
@@ -154,7 +136,7 @@ app.post('/api/analyze-text', async (req, res) => {
     let detectedHerbs = [];
     let detectedDrugs = [];
 
-    // 1. Entity Detection (Synonym Bridge)
+    // Entity Detection
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
             const entry = SYNONYM_BRIDGE[key];
@@ -167,11 +149,11 @@ app.post('/api/analyze-text', async (req, res) => {
     const d = detectedDrugs[0] || "unknown";
 
     if (h === "unknown" || d === "unknown") {
-        return res.json({ results: [], entities: [h, d], message: "Please identify a specific herb and drug." });
+        return res.json({ results: [], entities: [h, d], message: "Identify both a herb and a drug." });
     }
 
-    // --- STEP 1: CSV MASTER DATABASE ---
-    console.log(`[Waterfall 1] Checking CSV for ${h} + ${d}`);
+    // --- WATERFALL 1: CSV MASTER ---
+    console.log(`[Waterfall 1] Checking CSV: ${h} + ${d}`);
     const csvMatch = interactionsDB.find(i => {
         const dbH = i.herb.toLowerCase();
         const dbD = i.drug.toLowerCase();
@@ -179,69 +161,54 @@ app.post('/api/analyze-text', async (req, res) => {
                (dbH.includes(d.toLowerCase()) && dbD.includes(h.toLowerCase()));
     });
 
-    // Check if CSV match is actually valid/populated
     if (csvMatch && csvMatch.clinical_effect && csvMatch.clinical_effect !== "No effect documented.") {
-        console.log("✅ CSV Match Found.");
         return res.json({ results: [csvMatch], entities: [h, d] });
     }
 
-    // --- STEP 2: BioBERT AI & PUBMED (Triggered if CSV fails) ---
-    console.log(`[Waterfall 2] CSV failed. Triggering BioBERT & PubMed for ${h} + ${d}`);
-    
+    // --- WATERFALL 2: BioBERT & PubMed ---
+    console.log(`[Waterfall 2] CSV Fail. Checking AI for: ${h} + ${d}`);
     try {
-        const [aiResponse, pCount] = await Promise.all([
-            queryBioBERT(text),
-            fetchPubMed(h, d)
-        ]);
-
+        const [aiResponse, pCount] = await Promise.all([queryBioBERT(text), fetchPubMed(h, d)]);
         let aiScore = 0;
-        let hasAIInteraction = false;
-        
-        // Validation for BioBERT response format
-        if (Array.isArray(aiResponse) && aiResponse[0] && aiResponse[0][0]) {
-            const topResult = aiResponse[0][0];
-            // Ensure we only trigger if confidence is high or label is positive
-            hasAIInteraction = topResult.label === "LABEL_1" || topResult.score > 0.6;
-            aiScore = Math.round(topResult.score * 100);
+        let hasAI = false;
+
+        if (Array.isArray(aiResponse) && aiResponse[0]) {
+            const top = Array.isArray(aiResponse[0]) ? aiResponse[0][0] : aiResponse[0];
+            hasAI = top.label === "LABEL_1" || top.score > 0.6;
+            aiScore = Math.round(top.score * 100);
         }
 
-        if (hasAIInteraction || pCount > 0) {
-            console.log("✅ BioBERT/PubMed Match Found.");
+        if (hasAI || pCount > 0) {
             return res.json({
                 results: [{
-                    source: `BioBERT AI Prediction (Confidence: ${aiScore}%)`,
+                    source: `BioBERT AI (Confidence: ${aiScore}%)`,
                     severity: "MODERATE (AI Predicted)",
-                    clinical_effect: pCount > 0 
-                        ? `AI detected potential interaction. Literature check found ${pCount} relevant PubMed results.` 
-                        : "AI model identified high-probability pharmacokinetic interaction pattern.",
-                    recommendation: "Clinical consultation recommended. Monitor patient for unexpected side effects.",
-                    mechanism: "NLP-based biomedical pattern recognition.",
+                    clinical_effect: pCount > 0 ? `AI detected interaction pattern. PubMed found ${pCount} matches.` : "AI model identified high-risk pharmacokinetic pattern.",
+                    recommendation: "Clinical monitoring advised. AI suggests potential interference.",
+                    mechanism: "Transformer-based NLP Pattern Recognition.",
                     pubmed_count: pCount,
                     evidence: pCount > 0 ? "PubMed Matches" : "In-silico Prediction"
                 }],
                 entities: [h, d]
             });
         }
-    } catch (err) {
-        console.error("❌ BioBERT/PubMed Error:", err);
-    }
+    } catch (e) { console.error("AI Waterfall Error:", e); }
 
-    // --- STEP 3: PK ENZYME OVERLAP (Last Resort) ---
-    console.log(`[Waterfall 3] AI failed. Checking Enzyme Overlap for ${h} + ${d}`);
+    // --- WATERFALL 3: PK OVERLAP ---
+    console.log(`[Waterfall 3] AI Fail. Checking Enzyme Overlap: ${h} + ${d}`);
     const hProf = herbProfiles[h.toLowerCase()];
     const dProf = drugProfiles[d.toLowerCase()];
-    
+
     if (hProf?.enzymes && dProf?.enzymes) {
         const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
         if (overlap.length > 0) {
-            console.log("✅ Enzyme Overlap Found.");
             return res.json({
                 results: [{
-                    source: "Pharmacokinetic Logic",
+                    source: "Pharmacokinetic Logic Engine",
                     severity: "THEORETICAL",
-                    clinical_effect: `Shared metabolic pathways detected: ${overlap.join(', ')}.`,
-                    mechanism: `Potential competitive metabolism via ${overlap.join(', ')}.`,
-                    recommendation: "Theoretical interaction. Monitor drug plasma levels if possible.",
+                    clinical_effect: `Overlap detected on pathways: ${overlap.join(', ')}.`,
+                    mechanism: `Potential competition for metabolic enzymes.`,
+                    recommendation: "Monitor drug plasma levels; theoretical interaction via shared pathways.",
                     evidence: "PK Mapping"
                 }],
                 entities: [h, d]
@@ -249,14 +216,10 @@ app.post('/api/analyze-text', async (req, res) => {
         }
     }
 
-    // --- FINAL FALLBACK ---
-    console.log("❌ No Interaction Detected in Waterfall.");
-    res.json({ 
-        results: [], 
-        entities: [h, d], 
-        message: "No interaction found in local database, AI analysis, or enzyme profiles." 
-    });
+    res.json({ results: [], entities: [h, d], message: "No interaction found in Database, AI, or Enzyme profiles." });
 });
+
+app.get('/api/list-all', (req, res) => res.json(interactionsDB));
 
 const PORT = process.env.PORT || 10000;
 loadCSV().then(() => {
