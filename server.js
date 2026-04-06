@@ -137,153 +137,139 @@ async function loadCSV() {
 }
 
 // --- 5. ROUTES ---
+
 app.post('/api/analyze-text', async (req, res) => {
-    const { text } = req.body;
-    if (!text) return res.status(400).json({ error: "No input." });
+    try {
+        const { text } = req.body;
+        if (!text) return res.status(400).json({ error: "No input provided." });
 
-    const input = text.toLowerCase();
-    let detectedHerbs = new Set();
-    let detectedDrugs = new Set();
+        const input = text.toLowerCase();
+        let detectedHerbs = new Set();
+        let detectedDrugs = new Set();
 
-    // 1. Sort keys by length (longest first) so "Gallic acid" matches before "Gallic"
-    const sortedKeys = Object.keys(SYNONYM_BRIDGE).sort((a, b) => b.length - a.length);
+        // 1. ENTITY DETECTION (Longest-match first to prioritize "Gallic Acid" over "Gallic")
+        const sortedKeys = Object.keys(SYNONYM_BRIDGE).sort((a, b) => b.length - a.length);
 
-    sortedKeys.forEach(key => {
-        // Use a more flexible regex that handles multi-word keys
-        const regex = new RegExp(`\\b${key.toLowerCase()}\\b`, 'gi');
-        if (regex.test(input)) {
-            const entry = SYNONYM_BRIDGE[key];
-            if (entry.type === 'herb') detectedHerbs.add(entry.name);
-            else if (entry.type === 'drug') detectedDrugs.add(entry.name);
-        }
-    });
-
-    const hList = Array.from(detectedHerbs);
-    const dList = Array.from(detectedDrugs);
-
-    // CRITICAL LOG: See what the system recognized
-    console.log(`🔍 Detected: Herbs[${hList}] | Drugs[${dList}]`);
-
-    if (hList.length === 0 || dList.length === 0) {
-        return res.json({ results: [], entities: [hList[0]||"None", dList[0]||"None"], message: "Identify both a herb and a drug." });
-    }
-
-    // We test the first pair found
-    const h = hList[0];
-    const d = dList[0];
-
-    // WATERFALL 1: CSV SEARCH
-    console.log(`[W1] Searching CSV for: "${h}" + "${d}"`);
-    
-    const csvMatch = interactionsDB.find(i => {
-        const rowH = i.herb.toLowerCase().trim();
-        const rowD = i.drug.toLowerCase().trim();
-        const findH = h.toLowerCase().trim();
-        const findD = d.toLowerCase().trim();
-
-        // Check A+B or B+A
-        return (rowH.includes(findH) && rowD.includes(findD)) || 
-               (rowH.includes(findD) && rowD.includes(findH));
-    });
-
-    if (csvMatch) {
-        console.log("✅ W1 MATCH FOUND!");
-        return res.json({ results: [csvMatch], entities: [h, d] });
-    }
-
-    console.log(`❌ W1 Missed. Falling through to AI...`);
-    // ... rest of your AI code ...
-});
-
-  // --- WATERFALL 1: CSV (REPAIRED) ---
-console.log(`[W1] Searching CSV for: ${h} + ${d}`);
-
-const csvMatch = interactionsDB.find(i => {
-    // 1. Clean everything to be safe
-    const dbHerb = i.herb.toLowerCase().trim();
-    const dbDrug = i.drug.toLowerCase().trim();
-    const userHerb = h.toLowerCase().trim();
-    const userDrug = d.toLowerCase().trim();
-
-    // 2. Check for both A+B and B+A combinations
-    // We use .includes() so "Metformin Hydrochloride" matches "Metformin"
-    const matchNormal = (dbHerb.includes(userHerb) && dbDrug.includes(userDrug));
-    const matchReverse = (dbHerb.includes(userDrug) && dbDrug.includes(userHerb));
-
-    return matchNormal || matchReverse;
-});
-
-if (csvMatch) {
-    console.log("✅ [W1] MATCH FOUND IN CSV:", csvMatch.herb, "+", csvMatch.drug);
-    return res.json({ 
-        results: [csvMatch], 
-        entities: [h, d] 
-    });
-} else {
-    console.log(`❌ [W1] No match in ${interactionsDB.length} records. Moving to AI...`);
-}
-
-    // --- WATERFALL 2: BioBERT & PubMed ---
-console.log(`[W2] Falling through to AI for: ${h} + ${d}`);
-try {
-    const [aiResponse, pCount] = await Promise.all([queryBioBERT(text), fetchPubMed(h, d)]);
-    let aiScore = 0;
-    let hasAI = false;
-
-    // --- UPDATED AI PARSER START ---
-    if (Array.isArray(aiResponse) && aiResponse.length > 0) {
-        console.log("🤖 Raw AI Data:", JSON.stringify(aiResponse)); // Debugging log
-
-        // Check if ANY part of the AI response mentions an interaction
-        const riskEntry = aiResponse.find(item => 
-            (item.entity_group === 'INTERACTION' || item.label === 'LABEL_1' || item.label === 'INTERACT') && 
-            item.score > 0.4
-        );
-
-        if (riskEntry) {
-            hasAI = true;
-            aiScore = Math.round(riskEntry.score * 100);
-        }
-    }
-    // --- UPDATED AI PARSER END ---
-
-    if (hasAI || pCount > 0) {
-        return res.json({
-            results: [{
-                source: `BioBERT AI (Confidence: ${aiScore}%)`,
-                severity: aiScore > 70 ? "HIGH" : "MODERATE",
-                clinical_effect: pCount > 0 
-                    ? `AI predicted interaction. PubMed found ${pCount} matching studies.` 
-                    : "BioBERT model identified a high-risk pharmacokinetic/dynamic pattern.",
-                recommendation: "Clinical monitoring or dose adjustment advised.",
-                mechanism: "BioBERT Relation Extraction",
-                evidence: pCount > 0 ? "PubMed Hybrid" : "In-silico Prediction"
-            }],
-            entities: [h, d]
+        sortedKeys.forEach(key => {
+            const regex = new RegExp(`\\b${key.toLowerCase()}\\b`, 'gi');
+            if (regex.test(input)) {
+                const entry = SYNONYM_BRIDGE[key];
+                if (entry.type === 'herb') detectedHerbs.add(entry.name);
+                else if (entry.type === 'drug') detectedDrugs.add(entry.name);
+            }
         });
-    }
-} catch (e) { 
-    console.error("AI Waterfall Error:", e); 
-}
 
-    // WATERFALL 3: ENZYME LOGIC
-    const hP = herbProfiles[h.toLowerCase()];
-    const dP = drugProfiles[d.toLowerCase()];
-    if (hP?.enzymes && dP?.enzymes) {
-        const overlap = hP.enzymes.filter(e => dP.enzymes.includes(e));
-        if (overlap.length > 0) {
-            return res.json({
-                results: [{
-                    source: "Enzyme Overlap Engine",
-                    severity: "THEORETICAL",
-                    clinical_effect: `Shared metabolic pathway: ${overlap.join(', ')}.`
-                }],
-                entities: [h, d]
+        const hList = Array.from(detectedHerbs);
+        const dList = Array.from(detectedDrugs);
+
+        console.log(`🔍 Detected Raw: Herbs[${hList}] | Drugs[${dList}]`);
+
+        if (hList.length === 0 || dList.length === 0) {
+            return res.json({ 
+                results: [], 
+                entities: [hList[0] || "None", dList[0] || "None"], 
+                message: "Please specify both a herb and a drug." 
             });
         }
-    }
 
-    res.json({ results: [], entities: [h, d], message: "No documented interaction found." });
+        // 2. KNOWLEDGE GRAPH RESOLUTION (The "Gallic Acid -> Triphala" Bridge)
+        const rawHerb = hList[0];
+        const drug = dList[0];
+        let searchHerb = rawHerb;
+
+        // Check if the herb profile has a parent (e.g., Gallic Acid -> Triphala)
+        const herbData = herbProfiles[rawHerb.toLowerCase()];
+        if (herbData && herbData.parent_herb) {
+            console.log(`🔗 KG Resolve: Mapping ${rawHerb} to parent ${herbData.parent_herb}`);
+            searchHerb = herbData.parent_herb;
+        }
+
+        // --- WATERFALL 1: CSV SEARCH (Fixed with normalized matching) ---
+        console.log(`[W1] Searching CSV for: "${searchHerb}" + "${drug}"`);
+        
+        const csvMatch = interactionsDB.find(i => {
+            const dbH = i.herb.toLowerCase().trim();
+            const dbD = i.drug.toLowerCase().trim();
+            const targetH = searchHerb.toLowerCase().trim();
+            const targetD = drug.toLowerCase().trim();
+
+            return (dbH.includes(targetH) && dbD.includes(targetD)) || 
+                   (dbH.includes(targetD) && dbD.includes(targetH));
+        });
+
+        if (csvMatch) {
+            console.log("✅ W1 MATCH FOUND!");
+            return res.json({ results: [csvMatch], entities: [rawHerb, drug] });
+        }
+
+        // --- WATERFALL 2: BioBERT & PubMed ---
+        console.log(`❌ W1 Missed. [W2] Calling AI for context: ${text}`);
+        const [aiResponse, pCount] = await Promise.all([queryBioBERT(text), fetchPubMed(rawHerb, drug)]);
+        
+        let aiScore = 0;
+        let hasAI = false;
+
+        if (Array.isArray(aiResponse) && aiResponse.length > 0) {
+            console.log("🤖 Raw AI Data:", JSON.stringify(aiResponse));
+            const riskEntry = aiResponse.find(item => 
+                (item.entity_group === 'INTERACTION' || item.label === 'LABEL_1' || item.label === 'INTERACT') && 
+                item.score > 0.4
+            );
+            if (riskEntry) {
+                hasAI = true;
+                aiScore = Math.round(riskEntry.score * 100);
+            }
+        }
+
+        if (hasAI || pCount > 0) {
+            return res.json({
+                results: [{
+                    source: `BioBERT AI (Confidence: ${aiScore}%)`,
+                    severity: aiScore > 70 ? "HIGH" : "MODERATE",
+                    clinical_effect: pCount > 0 
+                        ? `AI predicted interaction. PubMed found ${pCount} matching studies.` 
+                        : "BioBERT identified a high-risk pharmacokinetic pattern.",
+                    recommendation: "Clinical monitoring or dose adjustment advised.",
+                    mechanism: "BioBERT Relation Extraction",
+                    evidence: pCount > 0 ? "PubMed Hybrid" : "In-silico Prediction"
+                }],
+                entities: [rawHerb, drug]
+            });
+        }
+
+        // --- WATERFALL 3: ENZYME OVERLAP ---
+        console.log(`❌ W2 Missed. [W3] Checking Enzymatic Overlap...`);
+        const hP = herbProfiles[rawHerb.toLowerCase()];
+        const dP = drugProfiles[drug.toLowerCase()];
+        
+        if (hP?.enzymes && dP?.enzymes) {
+            const overlap = hP.enzymes.filter(e => dP.enzymes.includes(e));
+            if (overlap.length > 0) {
+                return res.json({
+                    results: [{
+                        source: "Enzyme Overlap Engine",
+                        severity: "THEORETICAL",
+                        clinical_effect: `Shared metabolic pathway detected: ${overlap.join(', ')}. Possible competition for clearance.`,
+                        recommendation: "Caution recommended if patient has hepatic impairment.",
+                        mechanism: "Cytochrome P450 Overlap",
+                        evidence: "Pharmacokinetic Profiling"
+                    }],
+                    entities: [rawHerb, drug]
+                });
+            }
+        }
+
+        // FINAL FALLBACK
+        res.json({ 
+            results: [], 
+            entities: [rawHerb, drug], 
+            message: "✅ Clinical Safety Check Passed. No documented interaction found." 
+        });
+
+    } catch (e) {
+        console.error("🔥 SYSTEM ERROR:", e);
+        res.status(500).json({ error: "Internal Analysis Error" });
+    }
 });
 
 app.get('/api/list-all', (req, res) => res.json(interactionsDB));
