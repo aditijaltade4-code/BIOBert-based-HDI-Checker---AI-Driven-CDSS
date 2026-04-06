@@ -11,14 +11,13 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname)));
 
-// --- 1. DATA PATHS (Force Absolute Paths for Windows) ---
+// --- 1. DATA PATHS (Force Absolute Paths for Windows/Render) ---
 const CSV_PATH = path.resolve(__dirname, 'data', 'HDI_Master_List.csv');
 let interactionsDB = [];
 let herbProfiles = {};
 let drugProfiles = {};
 
 try {
-    // Using path.resolve here for consistency
     herbProfiles = require(path.resolve(__dirname, 'herb_profiles.json'));
     drugProfiles = require(path.resolve(__dirname, 'drug_profiles.json'));
     console.log("✅ Herb/Drug JSON Profiles Loaded");
@@ -61,24 +60,35 @@ const SYNONYM_BRIDGE = {
     "black pepper": { name: "Black pepper", type: "herb" }, "piper nigrum": { name: "Black pepper", type: "herb" }
 };
 
-// --- 3. EXTERNAL API LOGIC (FIXED FOR HF ROUTER) ---
+// --- 3. EXTERNAL API LOGIC (FIXED FOR HF ROUTER PIPELINES) ---
 async function queryBioBERT(text) {
     const token = process.env.HF_TOKEN;
     if (!token) {
-        console.error("❌ BioBERT Error: HF_TOKEN environment variable is missing.");
+        console.error("❌ BioBERT Error: HF_TOKEN missing.");
         return null;
     }
+
+    // FIXED: Appended pipeline task to satisfy the new HF Router requirements
+    const MODEL_URL = "https://router.huggingface.co/hf-inference/models/aditijaltade4/BIOBert-based-HDI-Checker/pipeline/token-classification";
+
     try {
         console.log("📡 Querying BioBERT via Hugging Face Router...");
-        // URL UPDATED TO NEW ROUTER ENDPOINT
-        const response = await fetch("https://router.huggingface.co/hf-inference/models/aditijaltade4/BIOBert-based-HDI-Checker", {
+        const response = await fetch(MODEL_URL, {
             headers: { 
-                Authorization: `Bearer ${token.trim()}`, 
+                "Authorization": `Bearer ${token.trim()}`, 
                 "Content-Type": "application/json" 
             },
             method: "POST",
             body: JSON.stringify({ inputs: text, options: { wait_for_model: true } }),
         });
+
+        // SAFETY: Check if response is valid JSON to prevent "Unexpected token N"
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+            const rawError = await response.text();
+            console.error(`❌ API Error (${response.status}): ${rawError}`);
+            return null;
+        }
 
         const resJson = await response.json();
         console.log("🤖 AI Response Received:", JSON.stringify(resJson));
@@ -90,7 +100,7 @@ async function queryBioBERT(text) {
 
         return resJson;
     } catch (e) { 
-        console.error("BioBERT Query Error:", e);
+        console.error("❌ BioBERT Connection Error:", e.message);
         return null; 
     }
 }
@@ -148,7 +158,6 @@ app.post('/api/analyze-text', async (req, res) => {
     let detectedHerbs = [];
     let detectedDrugs = [];
 
-    // Improved Entity Detection (Regex Case-Insensitive)
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
             const entry = SYNONYM_BRIDGE[key];
@@ -182,11 +191,11 @@ app.post('/api/analyze-text', async (req, res) => {
         let aiScore = 0;
         let hasAI = false;
 
-        if (Array.isArray(aiResponse) && aiResponse[0]) {
-            const top = Array.isArray(aiResponse[0]) ? aiResponse[0][0] : aiResponse[0];
-            // Adjusting logic to catch model-specific labels
-            hasAI = top.label === "LABEL_1" || top.label === "INTERACTION" || top.score > 0.6;
-            aiScore = Math.round(top.score * 100);
+        if (Array.isArray(aiResponse) && aiResponse.length > 0) {
+            // Logic for token-classification or sequence-classification labels
+            const firstResult = Array.isArray(aiResponse[0]) ? aiResponse[0][0] : aiResponse[0];
+            hasAI = firstResult.label === "LABEL_1" || firstResult.label === "INTERACTION" || firstResult.score > 0.5;
+            aiScore = Math.round(firstResult.score * 100);
         }
 
         if (hasAI || pCount > 0) {
@@ -203,7 +212,7 @@ app.post('/api/analyze-text', async (req, res) => {
                 entities: [h, d]
             });
         }
-    } catch (e) { console.error("AI Error:", e); }
+    } catch (e) { console.error("AI Waterfall Error:", e); }
 
     // WATERFALL 3: Enzyme Overlap
     const hProf = herbProfiles[h.toLowerCase()];
