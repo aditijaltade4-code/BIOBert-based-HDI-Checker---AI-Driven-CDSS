@@ -161,41 +161,59 @@ app.post('/api/analyze-text', async (req, res) => {
         return res.json({ results: [], entities: [h, d], message: "Please specify both a herb and a drug." });
     }
 
-    // WATERFALL 1: CSV MATCH
-    console.log(`[W1] CSV Search: ${h} + ${d}`);
-    const match = interactionsDB.find(i => 
-        (i.herb.includes(h.toLowerCase()) && i.drug.includes(d.toLowerCase())) || 
-        (i.herb.includes(d.toLowerCase()) && i.drug.includes(h.toLowerCase()))
-    );
+    // WATERFALL 1: CSV (Improved Partial Matching)
+    const csvMatch = interactionsDB.find(i => {
+        const herbInDB = i.herb.toLowerCase();
+        const drugInDB = i.drug.toLowerCase();
+        
+        // This checks if the DETECTED name (e.g., Triphala) is INSIDE the DB string
+        // OR if the DB string is inside the detected name.
+        return (herbInDB.includes(h.toLowerCase()) || h.toLowerCase().includes(herbInDB)) &&
+               (drugInDB.includes(d.toLowerCase()) || d.toLowerCase().includes(drugInDB));
+    });
 
-    if (match) return res.json({ results: [match], entities: [h, d] });
+    // --- WATERFALL 2: BioBERT & PubMed ---
+console.log(`[W2] Falling through to AI for: ${h} + ${d}`);
+try {
+    const [aiResponse, pCount] = await Promise.all([queryBioBERT(text), fetchPubMed(h, d)]);
+    let aiScore = 0;
+    let hasAI = false;
 
-    // WATERFALL 2: AI & PUBMED
-    console.log(`[W2] AI/PubMed Fallback: ${h} + ${d}`);
-    try {
-        const [aiRes, pCount] = await Promise.all([queryBioBERT(text), fetchPubMed(h, d)]);
-        let hasAI = false;
-        let aiScore = 0;
+    // --- UPDATED AI PARSER START ---
+    if (Array.isArray(aiResponse) && aiResponse.length > 0) {
+        console.log("🤖 Raw AI Data:", JSON.stringify(aiResponse)); // Debugging log
 
-        if (Array.isArray(aiRes) && aiRes.length > 0) {
-            const top = Array.isArray(aiRes[0]) ? aiRes[0][0] : aiRes[0];
-            hasAI = top.label === "LABEL_1" || top.label === "INTERACTION" || top.score > 0.4;
-            aiScore = Math.round(top.score * 100);
+        // Check if ANY part of the AI response mentions an interaction
+        const riskEntry = aiResponse.find(item => 
+            (item.entity_group === 'INTERACTION' || item.label === 'LABEL_1' || item.label === 'INTERACT') && 
+            item.score > 0.4
+        );
+
+        if (riskEntry) {
+            hasAI = true;
+            aiScore = Math.round(riskEntry.score * 100);
         }
+    }
+    // --- UPDATED AI PARSER END ---
 
-        if (hasAI || pCount > 0) {
-            return res.json({
-                results: [{
-                    source: `BioBERT AI (${aiScore}%)`,
-                    severity: "MODERATE",
-                    clinical_effect: pCount > 0 ? `Detected. PubMed found ${pCount} matches.` : "Interaction pattern identified by AI.",
-                    recommendation: "Clinical monitoring suggested.",
-                    pubmed_count: pCount
-                }],
-                entities: [h, d]
-            });
-        }
-    } catch (e) { console.error("AI Error:", e.message); }
+    if (hasAI || pCount > 0) {
+        return res.json({
+            results: [{
+                source: `BioBERT AI (Confidence: ${aiScore}%)`,
+                severity: aiScore > 70 ? "HIGH" : "MODERATE",
+                clinical_effect: pCount > 0 
+                    ? `AI predicted interaction. PubMed found ${pCount} matching studies.` 
+                    : "BioBERT model identified a high-risk pharmacokinetic/dynamic pattern.",
+                recommendation: "Clinical monitoring or dose adjustment advised.",
+                mechanism: "BioBERT Relation Extraction",
+                evidence: pCount > 0 ? "PubMed Hybrid" : "In-silico Prediction"
+            }],
+            entities: [h, d]
+        });
+    }
+} catch (e) { 
+    console.error("AI Waterfall Error:", e); 
+}
 
     // WATERFALL 3: ENZYME LOGIC
     const hP = herbProfiles[h.toLowerCase()];
