@@ -91,7 +91,7 @@ async function fetchPubMed(h, d) {
     } catch (e) { return 0; }
 }
 
-// --- 4. DATA LOADER (REPAIRED: UNIVERSAL HEADER SEARCH) ---
+// --- 4. DATA LOADER ---
 async function loadCSV() {
     return new Promise((resolve) => {
         if (!fs.existsSync(CSV_PATH)) {
@@ -104,8 +104,6 @@ async function loadCSV() {
             .pipe(csv())
             .on('data', (row) => {
                 const keys = Object.keys(row);
-
-                // This logic finds the column even if it is "Herb", "herb", "HERB", or "Herb Name"
                 const findKey = (name) => keys.find(k => k.toLowerCase().replace(/[^a-z]/g, '').includes(name.toLowerCase()));
 
                 const hK = findKey('herb');
@@ -135,15 +133,12 @@ async function loadCSV() {
                 }
             })
             .on('end', () => {
-                if (interactionsDB.length === 0) {
-                    console.warn("⚠️ DATABASE LOADED: 0 records. Check if CSV headers match 'Herb' and 'Drug'.");
-                } else {
-                    console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records with full technical data.`);
-                }
+                console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records.`);
                 resolve();
             });
     });
 }
+
 // --- 5. ROUTES ---
 app.get('/api/list-all', (req, res) => res.json(interactionsDB));
 
@@ -159,23 +154,23 @@ app.post('/api/analyze-text', async (req, res) => {
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
             const entry = SYNONYM_BRIDGE[key];
-            if (entry.type === 'herb') detectedHerbs.push(entry.name);
-            else detectedDrugs.push(entry.name);
+            if (entry.type === 'herb' && !detectedHerbs.includes(entry.name)) detectedHerbs.push(entry.name);
+            else if (entry.type === 'drug' && !detectedDrugs.includes(entry.name)) detectedDrugs.push(entry.name);
         }
     });
 
     const h = detectedHerbs[0] || "unknown";
     const d = detectedDrugs[0] || "unknown";
 
-    if (h === "unknown" && d === "unknown") {
+    if (h === "unknown" || d === "unknown") {
         return res.json({ 
             results: [], 
             entities: [h, d], 
-            message: "I could not identify a specific herb and drug interaction." 
+            message: "Please specify both a valid herb and a drug to check for interactions." 
         });
     }
 
-    // Waterfall 1: Local Master CSV
+    // --- WATERFALL 1: LOCAL MASTER CSV (Highest Priority) ---
     const csvMatch = interactionsDB.find(i => {
         const findH = h.toLowerCase();
         const findD = d.toLowerCase();
@@ -187,48 +182,64 @@ app.post('/api/analyze-text', async (req, res) => {
         return res.json({ results: [csvMatch], entities: [h, d] });
     }
 
-    // --- NEW LOGIC: ENZYME OVERLAP CHECK (MECHANISM PULL) ---
-    const hProf = herbProfiles[h.toLowerCase()];
-    const dProf = drugProfiles[d.toLowerCase()];
-    let overlapMechanism = "";
-    if (hProf?.enzymes && dProf?.enzymes) {
-        const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
-        if (overlap.length > 0) {
-            overlapMechanism = `Potential competition at metabolic pathway: ${overlap.join(', ')}.`;
-        }
-    }
-
-    // Waterfall 2: PubMed & Trained BioBERT
-    const pCount = await fetchPubMed(h, d);
+    // --- WATERFALL 2: BioBERT & PUBMED (AI Prediction) ---
     const aiResponse = await queryBioBERT(text);
+    const pCount = await fetchPubMed(h, d);
 
-    // AI Confidence Logic Fix: Calculate score even if pCount exists
     let aiScore = 0;
     let hasAIInteraction = false;
+    
+    // Check if BioBERT returns an interaction (LABEL_1 usually denotes interaction in many HDI models)
     if (Array.isArray(aiResponse) && aiResponse[0] && aiResponse[0][0]) {
         hasAIInteraction = aiResponse[0][0].label === "LABEL_1";
         aiScore = Math.round(aiResponse[0][0].score * 100);
     }
 
-    if (pCount > 0 || hasAIInteraction) {
+    if (hasAIInteraction || pCount > 0) {
         return res.json({
             results: [{
                 source: `BioBERT AI Prediction (Confidence: ${aiScore}%)`,
                 severity: "MODERATE (AI Predicted)",
-                clinical_effect: pCount > 0 
-                    ? `Found ${pCount} literature matches. ${overlapMechanism || "Interaction patterns detected."}` 
-                    : `AI identified high-risk pharmacokinetic interaction. ${overlapMechanism || ""}`,
-                recommendation: "Consult a clinical pharmacist. Monitor for changes in drug efficacy or toxicity.",
-                pubmed_count: pCount
+                clinical_effect: `AI identified a potential interaction pattern. Literature Search: Found ${pCount} PubMed matches.`,
+                recommendation: "Consult a healthcare professional. Closely monitor for clinical changes.",
+                mechanism: "Pattern-based prediction from biomedical literature.",
+                pubmed_count: pCount,
+                evidence: pCount > 0 ? "PubMed Literature Found" : "Model Prediction"
             }],
             entities: [h, d]
         });
     }
 
-    res.json({ results: [], entities: [h, d], message: "No interaction found in local DB or AI analysis." });
+    // --- WATERFALL 3: PK ENZYME OVERLAP (Last Resort Mechanism) ---
+    const hProf = herbProfiles[h.toLowerCase()];
+    const dProf = drugProfiles[d.toLowerCase()];
+    
+    if (hProf?.enzymes && dProf?.enzymes) {
+        const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
+        if (overlap.length > 0) {
+            return res.json({
+                results: [{
+                    source: "Pharmacokinetic Logic Engine",
+                    severity: "POTENTIAL / THEORETICAL",
+                    clinical_effect: `Both ${h} and ${d} utilize the following metabolic pathways: ${overlap.join(', ')}.`,
+                    mechanism: `Potential competitive inhibition/induction at ${overlap.join(', ')}.`,
+                    recommendation: "Theoretical interaction detected via enzyme pathway overlap. Monitor for drug level fluctuations.",
+                    evidence: "Pharmacokinetic Mapping"
+                }],
+                entities: [h, d]
+            });
+        }
+    }
+
+    // Default: No Interaction Found
+    res.json({ 
+        results: [], 
+        entities: [h, d], 
+        message: `No documented interactions found for ${h} and ${d} in local databases, AI analysis, or metabolic profiles.` 
+    });
 });
 
 const PORT = process.env.PORT || 10000;
 loadCSV().then(() => {
-    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 CDSS Online`));
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 CDSS Online on Port ${PORT}`));
 });
