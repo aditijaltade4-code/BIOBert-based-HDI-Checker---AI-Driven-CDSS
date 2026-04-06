@@ -91,40 +91,38 @@ async function fetchPubMed(h, d) {
     } catch (e) { return 0; }
 }
 
-// --- 4. DATA LOADER ---
 async function loadCSV() {
     return new Promise((resolve) => {
+        // 1. Check if file actually exists
         if (!fs.existsSync(CSV_PATH)) {
-            console.error("❌ CSV file NOT found at", CSV_PATH);
+            console.error(`❌ FILE NOT FOUND: Check this path -> ${CSV_PATH}`);
             return resolve();
         }
-        
+
+        console.log("📂 File found. Starting stream...");
         interactionsDB = [];
+
         fs.createReadStream(CSV_PATH)
-            .pipe(csv())
+            .pipe(csv({ 
+                mapHeaders: ({ header }) => header.trim().toLowerCase() // Force headers to lowercase
+            }))
             .on('data', (row) => {
-                const keys = Object.keys(row);
-                const findKey = (name) => keys.find(k => k.toLowerCase().replace(/[^a-z]/g, '').includes(name.toLowerCase()));
+                // 2. Log the first row to see exactly what the keys look like
+                if (interactionsDB.length === 0) {
+                    console.log("📝 First row keys detected:", Object.keys(row));
+                }
 
-                const hK = findKey('herb');
-                const dK = findKey('drug');
-                const eK = findKey('effect');
-                const rK = findKey('recom');
-                const mK = findKey('mechanism');
-                const tK = findKey('type');
-                const evK = findKey('evidence');
-                const pkK = findKey('pkpd') || findKey('pharmacokinetic');
-
+                // Map keys using the lowercase version we forced above
                 const entry = {
-                    herb: (row[hK] || "").toLowerCase().trim(),
-                    drug: (row[dK] || "").toLowerCase().trim(),
-                    clinical_effect: row[eK] || "No effect documented.",
-                    recommendation: row[rK] || "Monitor clinical status.",
-                    severity: row['Severity'] || row['severity'] || "Moderate",
-                    mechanism: row[mK] || "N/A",
-                    interaction_type: row[tK] || "N/A",
-                    evidence: row[evK] || "N/A",
-                    pk_pd: row[pkK] || "N/A",
+                    herb: (row['herb'] || row['herb name'] || "").toLowerCase().trim(),
+                    drug: (row['drug'] || row['drug name'] || "").toLowerCase().trim(),
+                    clinical_effect: row['clinical_effect'] || row['effect'] || "No effect documented.",
+                    recommendation: row['recommendation'] || row['recom'] || "Monitor status.",
+                    severity: row['severity'] || "Moderate",
+                    mechanism: row['mechanism'] || "N/A",
+                    interaction_type: row['type'] || "N/A",
+                    evidence: row['evidence'] || "N/A",
+                    pk_pd: row['pkpd'] || row['pk_pd'] || "N/A",
                     source: "HD Master Database"
                 };
 
@@ -132,13 +130,19 @@ async function loadCSV() {
                     interactionsDB.push(entry);
                 }
             })
+            .on('error', (err) => {
+                console.error("❌ STREAM ERROR:", err.message);
+            })
             .on('end', () => {
-                console.log(`✅ DATABASE LOADED: ${interactionsDB.length} records.`);
+                if (interactionsDB.length === 0) {
+                    console.warn("⚠️ DATA LOADED: 0 records. Is the CSV empty or headers mismatched?");
+                } else {
+                    console.log(`✅ SUCCESS: ${interactionsDB.length} records loaded into memory.`);
+                }
                 resolve();
             });
     });
 }
-
 // --- 5. ROUTES ---
 app.get('/api/list-all', (req, res) => res.json(interactionsDB));
 
