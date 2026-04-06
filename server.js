@@ -161,16 +161,33 @@ app.post('/api/analyze-text', async (req, res) => {
         return res.json({ results: [], entities: [h, d], message: "Please specify both a herb and a drug." });
     }
 
-    // WATERFALL 1: CSV (Improved Partial Matching)
-    const csvMatch = interactionsDB.find(i => {
-        const herbInDB = i.herb.toLowerCase();
-        const drugInDB = i.drug.toLowerCase();
-        
-        // This checks if the DETECTED name (e.g., Triphala) is INSIDE the DB string
-        // OR if the DB string is inside the detected name.
-        return (herbInDB.includes(h.toLowerCase()) || h.toLowerCase().includes(herbInDB)) &&
-               (drugInDB.includes(d.toLowerCase()) || d.toLowerCase().includes(drugInDB));
+  // --- WATERFALL 1: CSV (REPAIRED) ---
+console.log(`[W1] Searching CSV for: ${h} + ${d}`);
+
+const csvMatch = interactionsDB.find(i => {
+    // 1. Clean everything to be safe
+    const dbHerb = i.herb.toLowerCase().trim();
+    const dbDrug = i.drug.toLowerCase().trim();
+    const userHerb = h.toLowerCase().trim();
+    const userDrug = d.toLowerCase().trim();
+
+    // 2. Check for both A+B and B+A combinations
+    // We use .includes() so "Metformin Hydrochloride" matches "Metformin"
+    const matchNormal = (dbHerb.includes(userHerb) && dbDrug.includes(userDrug));
+    const matchReverse = (dbHerb.includes(userDrug) && dbDrug.includes(userHerb));
+
+    return matchNormal || matchReverse;
+});
+
+if (csvMatch) {
+    console.log("✅ [W1] MATCH FOUND IN CSV:", csvMatch.herb, "+", csvMatch.drug);
+    return res.json({ 
+        results: [csvMatch], 
+        entities: [h, d] 
     });
+} else {
+    console.log(`❌ [W1] No match in ${interactionsDB.length} records. Moving to AI...`);
+}
 
     // --- WATERFALL 2: BioBERT & PubMed ---
 console.log(`[W2] Falling through to AI for: ${h} + ${d}`);
