@@ -154,7 +154,7 @@ app.post('/api/analyze-text', async (req, res) => {
     let detectedHerbs = [];
     let detectedDrugs = [];
 
-    // Entity Detection
+    // 🔍 1. Entity Detection
     Object.keys(SYNONYM_BRIDGE).forEach(key => {
         if (new RegExp(`\\b${key}\\b`, 'gi').test(input)) {
             const entry = SYNONYM_BRIDGE[key];
@@ -166,80 +166,94 @@ app.post('/api/analyze-text', async (req, res) => {
     const h = detectedHerbs[0] || "unknown";
     const d = detectedDrugs[0] || "unknown";
 
+    // If we can't find entities, we can't check the waterfall
     if (h === "unknown" || d === "unknown") {
         return res.json({ 
             results: [], 
             entities: [h, d], 
-            message: "Please specify both a valid herb and a drug to check for interactions." 
+            message: "Identify both a herb and a drug to run analysis." 
         });
     }
 
-    // --- WATERFALL 1: LOCAL MASTER CSV (Highest Priority) ---
+    // --- WATERFALL STEP 1: LOCAL CSV ---
+    console.log(`Searching CSV for: ${h} + ${d}`);
     const csvMatch = interactionsDB.find(i => {
-        const findH = h.toLowerCase();
-        const findD = d.toLowerCase();
-        return (i.herb.includes(findH) && i.drug.includes(findD)) ||
-               (i.herb.includes(findD) && i.drug.includes(findH));
+        const dbH = i.herb.toLowerCase();
+        const dbD = i.drug.toLowerCase();
+        const searchH = h.toLowerCase();
+        const searchD = d.toLowerCase();
+        return (dbH.includes(searchH) && dbD.includes(searchD)) || 
+               (dbH.includes(searchD) && dbD.includes(searchH));
     });
 
     if (csvMatch) {
+        console.log("✅ Match found in CSV.");
         return res.json({ results: [csvMatch], entities: [h, d] });
     }
 
-    // --- WATERFALL 2: BioBERT & PUBMED (AI Prediction) ---
-    const aiResponse = await queryBioBERT(text);
-    const pCount = await fetchPubMed(h, d);
+    // --- WATERFALL STEP 2: BioBERT AI & PUBMED ---
+    // This runs ONLY if csvMatch is null
+    console.log("Searching BioBERT & PubMed...");
+    const [aiResponse, pCount] = await Promise.all([
+        queryBioBERT(text),
+        fetchPubMed(h, d)
+    ]);
 
     let aiScore = 0;
     let hasAIInteraction = false;
     
-    // Check if BioBERT returns an interaction (LABEL_1 usually denotes interaction in many HDI models)
     if (Array.isArray(aiResponse) && aiResponse[0] && aiResponse[0][0]) {
-        hasAIInteraction = aiResponse[0][0].label === "LABEL_1";
+        // Some models use "LABEL_1" for interaction, others use "Interaction"
+        hasAIInteraction = aiResponse[0][0].label === "LABEL_1" || aiResponse[0][0].score > 0.7;
         aiScore = Math.round(aiResponse[0][0].score * 100);
     }
 
     if (hasAIInteraction || pCount > 0) {
+        console.log("✅ Match found via AI/PubMed.");
         return res.json({
             results: [{
-                source: `BioBERT AI Prediction (Confidence: ${aiScore}%)`,
+                source: `BioBERT AI (Confidence: ${aiScore}%)`,
                 severity: "MODERATE (AI Predicted)",
-                clinical_effect: `AI identified a potential interaction pattern. Literature Search: Found ${pCount} PubMed matches.`,
-                recommendation: "Consult a healthcare professional. Closely monitor for clinical changes.",
-                mechanism: "Pattern-based prediction from biomedical literature.",
+                clinical_effect: `AI detected interaction patterns. PubMed found ${pCount} related studies.`,
+                recommendation: "Clinical monitoring advised. AI suggests potential pharmacokinetic interference.",
+                mechanism: "Identified via Transformer-based NLP Analysis.",
                 pubmed_count: pCount,
-                evidence: pCount > 0 ? "PubMed Literature Found" : "Model Prediction"
+                evidence: "In-silico Prediction / Literature"
             }],
             entities: [h, d]
         });
     }
 
-    // --- WATERFALL 3: PK ENZYME OVERLAP (Last Resort Mechanism) ---
+    // --- WATERFALL STEP 3: PHARMACOKINETIC (PK) ENZYME OVERLAP ---
+    // This runs ONLY if AI/PubMed also found nothing
+    console.log("Checking Enzyme Overlap...");
     const hProf = herbProfiles[h.toLowerCase()];
     const dProf = drugProfiles[d.toLowerCase()];
     
     if (hProf?.enzymes && dProf?.enzymes) {
         const overlap = hProf.enzymes.filter(e => dProf.enzymes.includes(e));
         if (overlap.length > 0) {
+            console.log("✅ Match found via PK Overlap.");
             return res.json({
                 results: [{
                     source: "Pharmacokinetic Logic Engine",
-                    severity: "POTENTIAL / THEORETICAL",
-                    clinical_effect: `Both ${h} and ${d} utilize the following metabolic pathways: ${overlap.join(', ')}.`,
-                    mechanism: `Potential competitive inhibition/induction at ${overlap.join(', ')}.`,
-                    recommendation: "Theoretical interaction detected via enzyme pathway overlap. Monitor for drug level fluctuations.",
-                    evidence: "Pharmacokinetic Mapping"
+                    severity: "THEORETICAL",
+                    clinical_effect: `Overlap detected on metabolic pathways: ${overlap.join(', ')}.`,
+                    mechanism: `Potential competition for ${overlap.join(', ')} enzymes.`,
+                    recommendation: "Monitor for altered drug efficacy due to shared metabolic pathways.",
+                    evidence: "Enzyme Pathway Mapping"
                 }],
                 entities: [h, d]
             });
         }
     }
 
-    // Default: No Interaction Found
+    // --- FINAL FALLBACK ---
+    console.log("❌ No interaction found in any stage.");
     res.json({ 
         results: [], 
         entities: [h, d], 
-        message: `No documented interactions found for ${h} and ${d} in local databases, AI analysis, or metabolic profiles.` 
+        message: "No interaction detected in Database, AI models, or Enzyme profiles." 
     });
 });
 
